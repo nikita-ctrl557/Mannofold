@@ -1,17 +1,17 @@
 """Quick-profit scalper: small frequent positions with rapid profit-taking.
 
-Enters small positions (capped at 0.5) aligned with the regime drift.
-Uses light EMA smoothing on the raw weight signal to reduce churn/commission
-while still responding to regime changes.  Tracks bars-in-position per symbol
-and applies a hold_decay multiplier that ramps down after a grace period —
-mimicking a take-profit that peels off exposure quickly so most bars are
-flat-or-exiting (low risk) rather than deeply committed.
+Enters small positions (|weight| capped at 0.5) aligned with regime drift.
+Heavy EMA smoothing (alpha~0.10) limits turnover and commission drag.
+Tracks bars-in-position and applies a hold_decay after a short grace period —
+simulating taking profits and reducing exposure after holding a few bars.
+When decay brings exposure below a reset threshold the position clock resets,
+allowing a fresh re-entry on the next confirming signal.
 
-weight = sign(sharpe) * min(0.5, tanh(gain*|tanh(sharpe)|)) * hold_decay * confidence
+weight = sign(sharpe)*min(0.5, tanh(gain*|tanh(sharpe)|))*hold_decay*confidence
 hold_decay = decay_rate^max(0, bars_held - grace)
 confidence = regime_prob * (1 - anomaly_score)
 
-Flat on ANOMALY_REGIME or anomaly_score > 0.6.  Dead-band: |w| < 0.04 -> 0.
+Flat on ANOMALY_REGIME or anomaly_score > 0.6.  Dead-band |w|<0.04 -> 0.
 """
 
 from __future__ import annotations
@@ -28,40 +28,39 @@ from mannofold.contracts.models import (
 
 NAME = "quick_profit_scalper"
 DESCRIPTION = (
-    "Small frequent positions (|w|<=0.5) with hold_decay profit-taking; "
-    "EMA smoothing reduces churn; flat on anomaly; per-symbol state."
+    "Small positions capped at 0.5; EMA-smoothed signal with hold_decay profit-taking; "
+    "per-symbol state; flat on anomaly."
 )
 
 _EPS = 1e-9
 
-# Signal gain: tanh(gain * |tanh(sharpe)|) maps Sharpe -> (0,1)
+# Signal gain inside outer tanh
 _GAIN = 3.0
-# Hard cap on |weight|
+# Hard weight cap
 _MAX_WEIGHT = 0.5
 # Anomaly gate
 _ANOMALY_THRESH = 0.6
 # Dead-band
 _DEAD_BAND = 0.04
 
-# EMA smoothing on raw signal: alpha high -> quick response, alpha low -> smooth/low turnover
-# Use moderate alpha to balance responsiveness and commission reduction
-_EMA_ALPHA = 0.25
+# Heavy EMA smoothing (like trend_hold_long alpha=0.10) to keep turnover low
+_EMA_ALPHA = 0.10
 
-# Hold-decay: grace bars before decay starts, then decay_rate per bar
-_GRACE_BARS = 2       # hold full-size for this many bars
-_DECAY_RATE = 0.55    # aggressive per-bar factor after grace (profit-taking)
+# Hold-decay: grace period before decay kicks in, then aggressive decay
+_GRACE_BARS = 3        # hold full EMA weight for this many bars
+_DECAY_RATE = 0.70     # per-bar decay after grace (moderately aggressive)
 
-# Reset clock once decayed position weight falls below this
-_RESET_THRESH = 0.05
+# Reset hold clock when decayed weight falls below this threshold
+_RESET_THRESH = 0.06
 
 
 class QuickProfitScalper:
-    """Small-size scalper with EMA signal smoothing and hold-decay profit-taking."""
+    """Small-size scalper with EMA smoothing and hold-decay profit-taking."""
 
     def __init__(self) -> None:
-        self._ema: dict[str, float] = {}       # per-symbol EMA of raw weight
-        self._bars_held: dict[str, int] = {}   # bars since last direction
-        self._last_sign: dict[str, int] = {}   # last committed direction
+        self._ema: dict[str, float] = {}       # per-symbol EMA of raw signal
+        self._bars_held: dict[str, int] = {}   # consecutive bars in current direction
+        self._last_sign: dict[str, int] = {}   # last direction (+1/-1/0)
 
     # ------------------------------------------------------------------
     def signals(self, state: ManifoldState) -> SignalSet:
@@ -85,53 +84,55 @@ class QuickProfitScalper:
         bars_held = self._bars_held.get(sym, 0)
         last_sign = self._last_sign.get(sym, 0)
 
-        def _flat(decay_ema: bool = True) -> TargetPosition:
-            if decay_ema:
-                self._ema[sym] = (1.0 - _EMA_ALPHA) * prev_ema
+        def _flat() -> TargetPosition:
+            # Decay EMA toward zero; reset hold clock
+            self._ema[sym] = (1.0 - _EMA_ALPHA) * prev_ema
             self._bars_held[sym] = 0
             self._last_sign[sym] = 0
             return TargetPosition(ts=signals.ts, symbol=sym, target_weight=0.0)
 
-        # Hard flat conditions
+        # Hard gates
         if signals.regime_id == ANOMALY_REGIME or signals.anomaly > _ANOMALY_THRESH:
             return _flat()
 
         sharpe = signals.momentum
         confidence = signals.confidence
 
-        # Compute raw signal: sign(sharpe) * min(0.5, tanh(gain*|tanh(sharpe)|)) * confidence
+        # Raw signal: sign(sharpe) * min(0.5, tanh(gain*|tanh(sharpe)|)) * confidence
         sign_s = 1.0 if sharpe >= 0 else -1.0
         inner = math.tanh(_GAIN * abs(math.tanh(sharpe)))
         raw = sign_s * min(_MAX_WEIGHT, inner) * confidence
 
-        # EMA smooth to cut churn
+        # Heavy EMA smoothing to reduce churn
         smoothed = _EMA_ALPHA * raw + (1.0 - _EMA_ALPHA) * prev_ema
         self._ema[sym] = smoothed
 
         if abs(smoothed) < _DEAD_BAND:
-            return _flat(decay_ema=False)
+            self._bars_held[sym] = 0
+            self._last_sign[sym] = 0
+            return TargetPosition(ts=signals.ts, symbol=sym, target_weight=0.0)
 
         new_sign = 1 if smoothed > 0 else -1
 
-        # Direction flip resets bars_held
+        # Reset hold clock on direction flip
         if new_sign != last_sign:
             bars_held = 0
             self._last_sign[sym] = new_sign
 
-        # Hold-decay: full size for grace bars, then decay
+        # Apply hold_decay: grace bars at full size, then decay per bar
         extra = max(0, bars_held - _GRACE_BARS)
-        hold_decay = _DECAY_RATE ** extra if extra > 0 else 1.0
+        hold_decay = (_DECAY_RATE ** extra) if extra > 0 else 1.0
 
         weight = smoothed * hold_decay
 
-        # Increment bars held
+        # Increment bars counter
         self._bars_held[sym] = bars_held + 1
 
         # Dead-band after decay
         if abs(weight) < _DEAD_BAND:
             weight = 0.0
 
-        # When fully decayed, reset so next fresh signal starts at bar 0
+        # When decayed to near-zero, reset clock to allow fresh re-entry
         if abs(weight) < _RESET_THRESH:
             self._bars_held[sym] = 0
             self._last_sign[sym] = 0

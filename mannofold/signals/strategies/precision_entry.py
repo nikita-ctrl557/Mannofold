@@ -25,15 +25,17 @@ DESCRIPTION = (
 
 _EPS = 1e-9
 
-# ── Gate thresholds (calibrated to synthetic data distributions) ─────────────
-_REGIME_PROB_MIN = 0.60      # regime must be reasonably stable (median ~0.73)
-_ANOMALY_MAX = 0.35          # reject noisy / off-manifold states (median ~0.23)
-_DENSITY_GATE_MIN = 0.50     # density sigmoid must be in typical region
-_SHARPE_ABS_MIN = 0.25       # |sharpe| must show a clear directional edge (median ~0.28)
-_CONFIDENCE_MIN = 0.20       # joint confidence floor (regime_prob*(1-anomaly)*dg)
+# ── Gate thresholds (calibrated: density mid=0.4, regime_prob proxy via conf) ─
+# All must pass simultaneously; the conjunction keeps entry rate low.
+_ANOMALY_MAX = 0.35          # reject noisy / off-manifold states
+_DENSITY_GATE_MIN = 0.50     # density sigmoid must clear mid-point
+_SHARPE_ABS_MIN = 0.30       # |sharpe| must show clear directional edge
+# Confidence floor proxies regime_prob > 0.65 given anomaly < 0.35:
+# conf = regime_prob*(1-anomaly_score); at rp=0.65, anom=0.35 -> conf=0.4225
+_CONFIDENCE_MIN = 0.4225     # ~= 0.65 * (1 - 0.35)
 
 # ── Sizing parameters ────────────────────────────────────────────────────────
-_GAIN = 3.0                  # amplifier inside tanh(gain * tanh(sharpe))
+_GAIN = 2.5                  # amplifier inside tanh(gain * tanh(sharpe))
 _DEAD_BAND = 0.04            # collapse tiny weights to flat
 
 # ── Density sigmoid parameters (mid=0.4 so gate is ~0.5 at typical density) ──
@@ -83,17 +85,17 @@ class PrecisionEntryStrategy:
         confidence = signals.confidence
         anomaly = signals.anomaly
 
-        # Recover sharpe proxy from tanh(sharpe)
-        sharpe_proxy = math.atanh(max(-1 + _EPS, min(1 - _EPS, tanh_sharpe)))
+        # Recover sharpe from tanh(sharpe) (clamp to avoid atanh instability)
+        sharpe_proxy = math.atanh(max(-1.0 + _EPS, min(1.0 - _EPS, tanh_sharpe)))
 
-        # ── All quality gates must pass simultaneously ──
-        if dg < _DENSITY_GATE_MIN:
+        # ── ALL quality gates must pass simultaneously ──
+        if dg < _DENSITY_GATE_MIN:        # require high-density (typical) region
             return zero
-        if anomaly > _ANOMALY_MAX:
+        if anomaly > _ANOMALY_MAX:        # reject high-anomaly states
             return zero
-        if confidence < _CONFIDENCE_MIN:
+        if confidence < _CONFIDENCE_MIN:  # proxies regime_prob > ~0.65 when anom < 0.35
             return zero
-        if abs(sharpe_proxy) < _SHARPE_ABS_MIN:
+        if abs(sharpe_proxy) < _SHARPE_ABS_MIN:  # require clear directional drift
             return zero
 
         # All gates cleared — weight = tanh(gain*tanh(sharpe)) * confidence
