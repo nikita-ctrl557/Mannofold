@@ -38,7 +38,12 @@ def discover() -> list[StrategyEntry]:
     for info in pkgutil.iter_modules(__path__):
         if info.name.startswith("_"):
             continue
-        mod = importlib.import_module(f"{__name__}.{info.name}")
+        try:
+            mod = importlib.import_module(f"{__name__}.{info.name}")
+        except Exception:
+            # Skip a module that fails to import (e.g. mid-write) rather than
+            # breaking discovery for every caller.
+            continue
         name = getattr(mod, "NAME", None)
         build = getattr(mod, "build", None)
         if not name or not callable(build):
