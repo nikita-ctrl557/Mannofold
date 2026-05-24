@@ -17,9 +17,12 @@ client stall the engine:
   publish is O(n_subscribers) enqueue-or-drop and never blocks on a socket,
   so the engine loop runs at full speed regardless of client speed.
 
-Late subscribers are supported: they simply receive events from the moment
-they connect (no replay of history). When a run has already finished, the hub
-is marked closed and new subscribers are sent nothing and closed promptly.
+Late subscribers are supported: each hub keeps a bounded replay buffer of the
+events seen so far, so a client that connects shortly after the run starts is
+seeded with the history (from ``run_start``) before live events resume. When a
+run has already finished, the hub is marked closed; new subscribers still get
+the buffered history followed by the close sentinel, then the socket closes.
+Runs longer than the buffer only replay their most recent window.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -47,6 +51,10 @@ from mannofold.feed.synthetic import SyntheticConfig, generate_bars
 from mannofold.persist.store import LocalStateStore
 
 CLIENT_QUEUE_MAXSIZE = 1000
+# Bounded per-run history so a subscriber that connects shortly after the run
+# starts still receives the early events (notably ``run_start``). On runs longer
+# than this, only the most recent ``REPLAY_BUFFER_MAXLEN`` events are replayed.
+REPLAY_BUFFER_MAXLEN = 100_000
 
 
 class Hub:
@@ -54,34 +62,55 @@ class Hub:
 
     All mutation happens on the event loop thread, so the only cross-thread entry
     point is :meth:`publish_threadsafe`, which schedules ``_publish`` onto the loop.
+
+    A bounded replay buffer holds the events seen so far; a new subscriber is
+    seeded with that history (oldest first) at subscribe time, so connecting a
+    few milliseconds after the engine starts still yields the full stream from
+    ``run_start``. The buffer never blocks the engine: publishing is still an
+    O(n_subscribers) enqueue-or-drop on the loop thread.
     """
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
         self._subscribers: set[asyncio.Queue[dict[str, Any] | None]] = set()
+        self._history: deque[dict[str, Any] | None] = deque(maxlen=REPLAY_BUFFER_MAXLEN)
         self.closed = False
 
     def subscribe(self) -> asyncio.Queue[dict[str, Any] | None]:
         q: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=CLIENT_QUEUE_MAXSIZE)
+        # Seed with buffered history first (drop-oldest if it exceeds the queue),
+        # then register for live events. Both run on the loop thread, so no event
+        # can interleave between replay and registration.
+        for item in self._history:
+            self._offer(q, item)
         self._subscribers.add(q)
+        if self.closed:
+            # Already-finished run: ensure the writer sees a sentinel and exits
+            # instead of blocking forever on ``queue.get()``.
+            self._offer(q, None)
         return q
 
     def unsubscribe(self, q: asyncio.Queue[dict[str, Any] | None]) -> None:
         self._subscribers.discard(q)
 
-    def _publish(self, item: dict[str, Any] | None) -> None:
-        """Runs on the loop thread. Enqueue to every client, drop-oldest on overflow."""
-        for q in self._subscribers:
-            if q.full():
-                # Drop the oldest event for THIS client only; never block the producer.
-                try:
-                    q.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
+    @staticmethod
+    def _offer(q: asyncio.Queue[dict[str, Any] | None], item: dict[str, Any] | None) -> None:
+        """Enqueue, dropping this client's oldest event on overflow (never blocks)."""
+        if q.full():
             try:
-                q.put_nowait(item)
-            except asyncio.QueueFull:  # pragma: no cover - defensive
+                q.get_nowait()
+            except asyncio.QueueEmpty:
                 pass
+        try:
+            q.put_nowait(item)
+        except asyncio.QueueFull:  # pragma: no cover - defensive
+            pass
+
+    def _publish(self, item: dict[str, Any] | None) -> None:
+        """Runs on the loop thread. Buffer + enqueue to every client."""
+        self._history.append(item)
+        for q in self._subscribers:
+            self._offer(q, item)
 
     def publish_threadsafe(self, event: StreamEvent) -> None:
         """Called from the engine worker thread. Hands the event to the loop."""
