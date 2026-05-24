@@ -275,6 +275,20 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         steps = [StepResult.model_validate(s) for s in data.get("steps", [])]
         return compute_metrics(steps)
 
+    @app.get("/api/leaderboard")
+    def get_leaderboard() -> JSONResponse:
+        """Cross-scenario strategy leaderboard produced by
+        ``scripts/optimize_strategies.py`` (written to ``<data>/leaderboard.json``).
+        Returns an empty board when it hasn't been computed yet so the UI can
+        degrade. The web dashboard's Leaderboard tab reads this first, then
+        falls back to a bundled static copy."""
+        path = resolve_dir() / "leaderboard.json"
+        if not path.exists():
+            return JSONResponse(
+                content={"strategies": [], "scenarios": [], "ranking": [], "best_per_scenario": {}}
+            )
+        return JSONResponse(content=json.loads(path.read_text()))
+
     @app.post("/api/runs")
     async def start_run(body: StartRunBody | None = None) -> dict[str, str]:
         body = body or StartRunBody()

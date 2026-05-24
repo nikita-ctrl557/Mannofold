@@ -200,8 +200,14 @@ def main() -> None:
         "strategies": strategies,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(payload, indent=2))
-    print(f"\nwrote {len(strategies)} strategies over {len(scenarios)} scenarios -> {OUT}")
+    body = json.dumps(payload, indent=2)
+    OUT.write_text(body)
+    # Also write to the API data dir so a running :8000 server serves it live
+    # via GET /api/leaderboard.
+    api_out = Path("data/leaderboard.json")
+    api_out.parent.mkdir(parents=True, exist_ok=True)
+    api_out.write_text(body)
+    print(f"\nwrote {len(strategies)} strategies over {len(scenarios)} scenarios -> {OUT} + {api_out}")
     print("ranking by mean Sharpe:", payload["ranking"])
 
 
