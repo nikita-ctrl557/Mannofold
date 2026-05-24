@@ -1,0 +1,49 @@
+[project]
+name = "mannofold"
+version = "0.1.0"
+description = "Market-manifold trading engine with high-density visualization"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scikit-learn>=1.4",
+    "scipy>=1.11",
+    "duckdb>=0.10",
+    "pyarrow>=15",
+    "pydantic>=2.6",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",
+    "websockets>=12",
+    "python-dateutil>=2.9",
+]
+
+[project.optional-dependencies]
+# Heavy, compiled manifold libs — opt-in so the baseline always installs cleanly.
+manifold = ["umap-learn>=0.5.5", "hdbscan>=0.8.33"]
+dev = ["pytest>=8", "ruff>=0.4", "mypy>=1.9"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mannofold"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "UP042"]  # keep explicit `str, Enum` (no StrEnum behaviour change)
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

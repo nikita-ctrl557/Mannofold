@@ -1,0 +1,554 @@
+{
+  "StreamEvent": {
+    "$defs": {
+      "EventType": {
+        "enum": [
+          "run_start",
+          "step",
+          "regime_fit",
+          "portfolio",
+          "run_end"
+        ],
+        "title": "EventType",
+        "type": "string"
+      }
+    },
+    "description": "Envelope for everything pushed over the WebSocket.\n\n``seq`` is monotonic per run so the client can detect drops (the server may\ndrop-oldest under backpressure). ``payload`` shape depends on ``type``.",
+    "properties": {
+      "type": {
+        "$ref": "#/$defs/EventType"
+      },
+      "run_id": {
+        "title": "Run Id",
+        "type": "string"
+      },
+      "seq": {
+        "title": "Seq",
+        "type": "integer"
+      },
+      "payload": {
+        "additionalProperties": true,
+        "title": "Payload",
+        "type": "object"
+      }
+    },
+    "required": [
+      "type",
+      "run_id",
+      "seq",
+      "payload"
+    ],
+    "title": "StreamEvent",
+    "type": "object"
+  },
+  "StepResult": {
+    "$defs": {
+      "Bar": {
+        "description": "A single OHLCV bar. The atomic unit the engine steps over.",
+        "properties": {
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "open": {
+            "title": "Open",
+            "type": "number"
+          },
+          "high": {
+            "title": "High",
+            "type": "number"
+          },
+          "low": {
+            "title": "Low",
+            "type": "number"
+          },
+          "close": {
+            "title": "Close",
+            "type": "number"
+          },
+          "volume": {
+            "title": "Volume",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ts",
+          "symbol",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume"
+        ],
+        "title": "Bar",
+        "type": "object"
+      },
+      "FeatureVector": {
+        "description": "High-dimensional market-state vector x_t \u2208 R^D built from a bar window.",
+        "properties": {
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Values",
+            "type": "array"
+          },
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Names",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ts",
+          "symbol",
+          "values"
+        ],
+        "title": "FeatureVector",
+        "type": "object"
+      },
+      "Fill": {
+        "properties": {
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "side": {
+            "$ref": "#/$defs/Side"
+          },
+          "qty": {
+            "title": "Qty",
+            "type": "number"
+          },
+          "price": {
+            "title": "Price",
+            "type": "number"
+          },
+          "commission": {
+            "default": 0.0,
+            "title": "Commission",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ts",
+          "symbol",
+          "side",
+          "qty",
+          "price"
+        ],
+        "title": "Fill",
+        "type": "object"
+      },
+      "ManifoldState": {
+        "description": "The geometric position + derived quantities for one market state.\n\nAll fields are computed ONLINE from a frozen model \u2014 never from data with\n``ts`` in the future of this bar.",
+        "properties": {
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "embedding": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Embedding",
+            "type": "array"
+          },
+          "regime_id": {
+            "default": -1,
+            "title": "Regime Id",
+            "type": "integer"
+          },
+          "regime_prob": {
+            "default": 0.0,
+            "title": "Regime Prob",
+            "type": "number"
+          },
+          "density": {
+            "default": 0.0,
+            "title": "Density",
+            "type": "number"
+          },
+          "anomaly_score": {
+            "default": 0.0,
+            "title": "Anomaly Score",
+            "type": "number"
+          },
+          "fwd_return_mean": {
+            "default": 0.0,
+            "title": "Fwd Return Mean",
+            "type": "number"
+          },
+          "fwd_return_std": {
+            "default": 0.0,
+            "title": "Fwd Return Std",
+            "type": "number"
+          },
+          "velocity": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Velocity",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ts",
+          "symbol",
+          "embedding"
+        ],
+        "title": "ManifoldState",
+        "type": "object"
+      },
+      "Mode": {
+        "enum": [
+          "backtest",
+          "paper"
+        ],
+        "title": "Mode",
+        "type": "string"
+      },
+      "Order": {
+        "properties": {
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "side": {
+            "$ref": "#/$defs/Side"
+          },
+          "qty": {
+            "title": "Qty",
+            "type": "number"
+          },
+          "target_weight": {
+            "default": 0.0,
+            "title": "Target Weight",
+            "type": "number"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ts",
+          "symbol",
+          "side",
+          "qty"
+        ],
+        "title": "Order",
+        "type": "object"
+      },
+      "PortfolioState": {
+        "properties": {
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "cash": {
+            "title": "Cash",
+            "type": "number"
+          },
+          "equity": {
+            "title": "Equity",
+            "type": "number"
+          },
+          "gross_exposure": {
+            "default": 0.0,
+            "title": "Gross Exposure",
+            "type": "number"
+          },
+          "net_exposure": {
+            "default": 0.0,
+            "title": "Net Exposure",
+            "type": "number"
+          },
+          "positions": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Positions",
+            "type": "object"
+          },
+          "returns": {
+            "default": 0.0,
+            "title": "Returns",
+            "type": "number"
+          },
+          "drawdown": {
+            "default": 0.0,
+            "title": "Drawdown",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ts",
+          "cash",
+          "equity"
+        ],
+        "title": "PortfolioState",
+        "type": "object"
+      },
+      "Side": {
+        "enum": [
+          "buy",
+          "sell",
+          "flat"
+        ],
+        "title": "Side",
+        "type": "string"
+      },
+      "SignalSet": {
+        "description": "Trading signals derived from manifold geometry.",
+        "properties": {
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "momentum": {
+            "default": 0.0,
+            "title": "Momentum",
+            "type": "number"
+          },
+          "expected_return": {
+            "default": 0.0,
+            "title": "Expected Return",
+            "type": "number"
+          },
+          "anomaly": {
+            "default": 0.0,
+            "title": "Anomaly",
+            "type": "number"
+          },
+          "regime_id": {
+            "default": -1,
+            "title": "Regime Id",
+            "type": "integer"
+          },
+          "confidence": {
+            "default": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ts",
+          "symbol"
+        ],
+        "title": "SignalSet",
+        "type": "object"
+      },
+      "TargetPosition": {
+        "description": "Desired exposure as a signed fraction of equity in [-1, 1].",
+        "properties": {
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "target_weight": {
+            "default": 0.0,
+            "title": "Target Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ts",
+          "symbol"
+        ],
+        "title": "TargetPosition",
+        "type": "object"
+      }
+    },
+    "description": "Everything produced by a single engine step \u2014 the unit of the event stream.\n\nThe golden equivalence test asserts this is bit-identical between backtest and\npaper modes when replaying the same series.",
+    "properties": {
+      "seq": {
+        "title": "Seq",
+        "type": "integer"
+      },
+      "mode": {
+        "$ref": "#/$defs/Mode"
+      },
+      "bar": {
+        "$ref": "#/$defs/Bar"
+      },
+      "features": {
+        "$ref": "#/$defs/FeatureVector"
+      },
+      "manifold": {
+        "$ref": "#/$defs/ManifoldState"
+      },
+      "signals": {
+        "$ref": "#/$defs/SignalSet"
+      },
+      "target": {
+        "$ref": "#/$defs/TargetPosition"
+      },
+      "order": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Order"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "fill": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Fill"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "portfolio": {
+        "$ref": "#/$defs/PortfolioState"
+      }
+    },
+    "required": [
+      "seq",
+      "mode",
+      "bar",
+      "features",
+      "manifold",
+      "signals",
+      "target",
+      "portfolio"
+    ],
+    "title": "StepResult",
+    "type": "object"
+  },
+  "Regime": {
+    "description": "Metadata for a manifold regime (cluster), produced at fit time.",
+    "properties": {
+      "regime_id": {
+        "title": "Regime Id",
+        "type": "integer"
+      },
+      "label": {
+        "default": "",
+        "title": "Label",
+        "type": "string"
+      },
+      "color": {
+        "default": "#888888",
+        "title": "Color",
+        "type": "string"
+      },
+      "size": {
+        "default": 0,
+        "title": "Size",
+        "type": "integer"
+      },
+      "mean_fwd_return": {
+        "default": 0.0,
+        "title": "Mean Fwd Return",
+        "type": "number"
+      }
+    },
+    "required": [
+      "regime_id"
+    ],
+    "title": "Regime",
+    "type": "object"
+  },
+  "PortfolioState": {
+    "properties": {
+      "ts": {
+        "format": "date-time",
+        "title": "Ts",
+        "type": "string"
+      },
+      "cash": {
+        "title": "Cash",
+        "type": "number"
+      },
+      "equity": {
+        "title": "Equity",
+        "type": "number"
+      },
+      "gross_exposure": {
+        "default": 0.0,
+        "title": "Gross Exposure",
+        "type": "number"
+      },
+      "net_exposure": {
+        "default": 0.0,
+        "title": "Net Exposure",
+        "type": "number"
+      },
+      "positions": {
+        "additionalProperties": {
+          "type": "number"
+        },
+        "title": "Positions",
+        "type": "object"
+      },
+      "returns": {
+        "default": 0.0,
+        "title": "Returns",
+        "type": "number"
+      },
+      "drawdown": {
+        "default": 0.0,
+        "title": "Drawdown",
+        "type": "number"
+      }
+    },
+    "required": [
+      "ts",
+      "cash",
+      "equity"
+    ],
+    "title": "PortfolioState",
+    "type": "object"
+  }
+}
