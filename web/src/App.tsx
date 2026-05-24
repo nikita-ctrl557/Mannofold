@@ -18,6 +18,7 @@ import SignalsChart from "./components/SignalsChart";
 import RegimeLegend from "./components/RegimeLegend";
 import FeatureHeatmap from "./components/FeatureHeatmap";
 import OrderBlotter from "./components/OrderBlotter";
+import LeaderboardView from "./components/LeaderboardView";
 
 const LIVE_CAP = 50000; // hard cap on retained live points
 
@@ -36,6 +37,7 @@ export default function App() {
   const [simWindow, setSimWindow] = useState(1000);
   const [simStartFrac, setSimStartFrac] = useState(0.5);
   const [simSpeed, setSimSpeed] = useState("fast");
+  const [view, setView] = useState<"leaderboard" | "dashboard">("leaderboard");
 
   const connRef = useRef<{ close: () => void } | null>(null);
   // batch live steps to avoid a setState per WS message
@@ -202,6 +204,24 @@ export default function App() {
         selectedRun={selectedRun}
         onSelectRun={onSelectRun}
       />
+      <div className="tabs">
+        <button
+          className={`tab ${view === "leaderboard" ? "on" : ""}`}
+          onClick={() => setView("leaderboard")}
+        >
+          strategy leaderboard
+        </button>
+        <button
+          className={`tab ${view === "dashboard" ? "on" : ""}`}
+          onClick={() => setView("dashboard")}
+        >
+          manifold dashboard
+        </button>
+      </div>
+      {view === "leaderboard" ? (
+        <LeaderboardView />
+      ) : (
+      <>
       <SimControl
         datasets={datasets}
         dataset={simDataset}
@@ -267,6 +287,8 @@ export default function App() {
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }

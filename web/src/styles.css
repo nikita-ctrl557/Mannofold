@@ -435,3 +435,42 @@ tr:hover td {
   width: 8px !important;
   height: 8px !important;
 }
+
+/* ---- view tabs ---- */
+.tabs { display: flex; gap: 8px; padding: 10px 16px; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.tab { background: var(--panel); color: var(--fg-dim); border: 1px solid var(--border); padding: 6px 14px; font-family: var(--mono); font-size: 12px; cursor: pointer; border-radius: 4px; }
+.tab.on { border-color: var(--accent); color: var(--fg); }
+
+/* ---- leaderboard ---- */
+.lb { padding: 16px; }
+.lb-empty { padding: 40px 16px; color: var(--fg-dim); font-family: var(--mono); }
+.lb-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
+.lb-title { font-size: 16px; color: var(--fg); }
+.lb-sub { font-size: 11px; color: var(--fg-dim); margin-top: 2px; }
+.lb-gen { font-size: 10px; color: var(--fg-dim); }
+.lb-table { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.lb-row { display: grid; grid-template-columns: 32px 1.6fr 0.9fr 0.9fr 0.8fr 0.9fr 0.6fr; gap: 8px; padding: 9px 12px; align-items: center; border-bottom: 1px solid var(--border); font-size: 12px; }
+.lb-header { background: var(--panel-2); color: var(--fg-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+.lb-click { cursor: pointer; background: var(--panel); }
+.lb-click:hover { background: var(--panel-2); }
+.lb-rank { color: var(--fg-dim); }
+.lb-name { display: flex; flex-direction: column; color: var(--fg); }
+.lb-desc { font-size: 10px; color: var(--fg-dim); }
+.lb-num { font-variant-numeric: tabular-nums; text-align: right; color: var(--fg); }
+.lb-num.good { color: var(--good); }
+.lb-num.bad { color: var(--bad); }
+.lb-detail { background: #0d1117; padding: 6px 12px 10px 12px; border-bottom: 1px solid var(--border); }
+.lb-scn { display: grid; grid-template-columns: 1.7fr 0.8fr 0.7fr 0.8fr 0.8fr; gap: 8px; padding: 5px 0; font-size: 11px; align-items: center; border-bottom: 1px dashed var(--border); }
+.lb-scn-label { color: var(--fg-dim); display: flex; gap: 6px; align-items: center; }
+.lb-tag { font-size: 9px; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--border); }
+.lb-tag.real { color: var(--good); }
+.lb-tag.synthetic { color: var(--warn); }
+.lb-yoy { display: flex; flex-wrap: wrap; gap: 4px; grid-column: 1 / -1; margin-top: 2px; }
+.lb-yoy-cell { font-size: 9px; padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; }
+.lb-best { margin-top: 18px; }
+.lb-best-title { font-size: 12px; color: var(--fg); margin-bottom: 8px; }
+.lb-best-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.lb-best-cell { border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; background: var(--panel); display: flex; flex-direction: column; gap: 2px; }
+.lb-best-scn { font-size: 11px; color: var(--fg-dim); }
+.lb-best-strat { font-size: 12px; color: var(--accent); }
+.lb-best-note { font-size: 9px; color: var(--fg-dim); }
