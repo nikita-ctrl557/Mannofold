@@ -31,3 +31,6 @@ web/.vite/
 # Obsidian local state (keep the notes, drop the workspace cache)
 vault/.obsidian/workspace*
 vault/.obsidian/cache
+
+# Generated static run bundle (reproduce with scripts/build_web_runs.py)
+web/public/runs/

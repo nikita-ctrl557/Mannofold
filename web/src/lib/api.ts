@@ -18,10 +18,14 @@ export interface LoadResult {
   source: "api" | "sample";
 }
 
-// List available runs from the API (empty when offline).
+// List available runs from the API; fall back to the static bundle manifest
+// (precomputed real backtests shipped next to index.html) when offline.
 export async function listRuns(): Promise<string[]> {
   const list = await tryJson<{ runs: string[] }>("/api/runs");
-  return list?.runs ?? [];
+  if (list?.runs?.length) return list.runs;
+  const base = import.meta.env.BASE_URL;
+  const bundled = await tryJson<{ runs: string[] }>(`${base}runs/index.json`);
+  return bundled?.runs ?? [];
 }
 
 export interface DatasetInfo {
@@ -33,10 +37,14 @@ export interface DatasetInfo {
   description: string;
 }
 
-// Datasets available for the simulation view (synthetic + free historical).
+// Datasets available for the simulation view (synthetic + free historical);
+// fall back to the static bundle's dataset list when offline.
 export async function listDatasets(): Promise<DatasetInfo[]> {
   const r = await tryJson<{ datasets: DatasetInfo[] }>("/api/datasets");
-  return r?.datasets ?? [];
+  if (r?.datasets?.length) return r.datasets;
+  const base = import.meta.env.BASE_URL;
+  const bundled = await tryJson<{ datasets: DatasetInfo[] }>(`${base}runs/datasets.json`);
+  return bundled?.datasets ?? [];
 }
 
 // Try the live API first; fall back to bundled sample for offline dev.
@@ -55,9 +63,18 @@ export async function loadRun(runId?: string): Promise<LoadResult> {
       return { run, regimes, source: "api" };
     }
   }
-  // offline path — bundled samples live next to index.html, so resolve them
-  // against the Vite base (BASE_URL) to stay correct under a hosted subpath.
+  // offline path — bundled static runs (precomputed real backtests) first,
+  // resolved against the Vite base (BASE_URL) so they work under a subpath.
   const base = import.meta.env.BASE_URL;
+  if (id) {
+    const staticRun = await tryJson<RunData>(`${base}runs/${id}/run.json`);
+    if (staticRun && staticRun.steps && staticRun.steps.length) {
+      const staticRegimes =
+        (await tryJson<Regime[]>(`${base}runs/${id}/regimes.json`)) ??
+        deriveRegimes(staticRun.steps);
+      return { run: staticRun, regimes: staticRegimes, source: "sample" };
+    }
+  }
   const run = await tryJson<RunData>(`${base}sample-run.json`);
   if (!run) {
     return {

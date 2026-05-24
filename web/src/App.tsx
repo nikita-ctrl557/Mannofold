@@ -61,7 +61,9 @@ export default function App() {
       setRuns(ids);
       setDatasets(ds);
       if (ds.length && !ds.some((d) => d.name === "vix")) setSimDataset(ds[0].name);
-      const def = ids.includes("vix") ? "vix" : ids[0] ?? "";
+      // Default to the first advertised run (manifest orders the compact,
+      // deepest-history dataset first for a fast mobile first paint).
+      const def = ids[0] ?? "";
       setSelectedRun(def);
       await loadById(def);
     })();
