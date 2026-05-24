@@ -55,8 +55,10 @@ export async function loadRun(runId?: string): Promise<LoadResult> {
       return { run, regimes, source: "api" };
     }
   }
-  // offline path
-  const run = await tryJson<RunData>("/sample-run.json");
+  // offline path — bundled samples live next to index.html, so resolve them
+  // against the Vite base (BASE_URL) to stay correct under a hosted subpath.
+  const base = import.meta.env.BASE_URL;
+  const run = await tryJson<RunData>(`${base}sample-run.json`);
   if (!run) {
     return {
       run: { run_id: "empty", steps: [] },
@@ -65,7 +67,7 @@ export async function loadRun(runId?: string): Promise<LoadResult> {
     };
   }
   const regimes =
-    (await tryJson<Regime[]>("/sample-regimes.json")) ??
+    (await tryJson<Regime[]>(`${base}sample-regimes.json`)) ??
     deriveRegimes(run.steps);
   return { run, regimes, source: "sample" };
 }

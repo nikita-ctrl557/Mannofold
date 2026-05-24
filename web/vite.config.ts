@@ -1,7 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
+// `base` is "/manifold/" for production builds so the bundle can be hosted
+// under a subpath (e.g. statically inside the Studio site at /manifold/).
+// Dev keeps "/" so the local Vite server + API proxy work unchanged.
+export default defineConfig(({ command }) => ({
+  base: command === "build" ? "/manifold/" : "/",
   plugins: [react()],
   server: {
     host: true,
@@ -17,4 +21,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));
