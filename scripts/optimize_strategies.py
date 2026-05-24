@@ -130,6 +130,27 @@ def _yoy(results) -> list[dict]:
     return out
 
 
+def _mom(results) -> tuple[float, float, list[dict]]:
+    """Month-over-month returns off the equity curve.
+    Returns (avg monthly return, % positive months, monthly series)."""
+    by_month: "OrderedDict[str, list[float]]" = OrderedDict()
+    for s in results:
+        key = f"{s.bar.ts.year}-{s.bar.ts.month:02d}"
+        by_month.setdefault(key, []).append(s.portfolio.equity)
+    series, prev = [], None
+    for month, eqs in by_month.items():
+        open_eq = prev if prev is not None else eqs[0]
+        ret = (eqs[-1] / open_eq - 1.0) if open_eq else 0.0
+        series.append({"month": month, "return": round(ret, 4)})
+        prev = eqs[-1]
+    if not series:
+        return 0.0, 0.0, []
+    rets = [m["return"] for m in series]
+    avg = sum(rets) / len(rets)
+    hit = sum(1 for r in rets if r > 0) / len(rets)
+    return avg, hit, series
+
+
 # Position-sizing knobs swept per (engine, scenario) — the per-stock
 # optimization. Higher target_vol => more exposure => higher return AND higher
 # drawdown; we pick the best risk-adjusted (Sharpe) config and report its
@@ -160,6 +181,9 @@ def _one(bars: list[Bar], strategy_build, target_vol: float, tail: int | None) -
     # Annualized (CAGR) return assuming ~252 daily bars/yr.
     m["annual_return"] = (1.0 + m["total_return"]) ** (252.0 / n_steps) - 1.0
     m["yoy"] = _yoy(results)
+    mom_avg, mom_hit, _ = _mom(results)
+    m["mom_avg"] = mom_avg          # average month-over-month return
+    m["mom_hit"] = mom_hit          # fraction of positive months
     m["target_vol"] = target_vol
     return m
 
@@ -197,6 +221,7 @@ def main() -> None:
             a["sharpe"] += m["sharpe"]; a["total_return"] += m["total_return"]
             a["annual_return"] += m["annual_return"]
             a["win_rate"] += m["win_rate"]; a["max_drawdown"] += m["max_drawdown"]
+            a["mom_avg"] += m["mom_avg"]; a["mom_hit"] += m["mom_hit"]
             a["n"] += 1
             if sid in HOLDOUT_IDS:
                 a["oos_sharpe"] += m["sharpe"]; a["oos_n"] += 1
@@ -207,7 +232,9 @@ def main() -> None:
                 "annual_return": round(m["annual_return"], 4),
                 "sharpe": round(m["sharpe"], 3),
                 "win_rate": round(m["win_rate"], 4), "max_drawdown": round(m["max_drawdown"], 4),
-                "n_trades": m["n_trades"], "target_vol": m["target_vol"], "yoy": m["yoy"],
+                "n_trades": m["n_trades"], "target_vol": m["target_vol"],
+                "mom_avg": round(m["mom_avg"], 4), "mom_hit": round(m["mom_hit"], 4),
+                "yoy": m["yoy"],
             }
         winner = max(results_here, key=lambda kv: kv[1]["sharpe"])
         wins[winner[0]] += 1
@@ -232,6 +259,8 @@ def main() -> None:
             "robust": bool(oos_sharpe > 0 and oos_sharpe >= is_sharpe - 0.3),
             "mean_return": round(a["total_return"] / n, 4),
             "mean_annual_return": round(a["annual_return"] / n, 4),
+            "mean_monthly_return": round(a["mom_avg"] / n, 4),
+            "monthly_hit_rate": round(a["mom_hit"] / n, 4),
             "best_return": round(best_scn["total_return"], 4),
             "scenarios_over_40pct_annual": scenarios_over_40,
             "mean_win_rate": round(a["win_rate"] / n, 4),
