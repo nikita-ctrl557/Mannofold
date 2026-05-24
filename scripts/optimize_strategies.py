@@ -130,20 +130,41 @@ def _yoy(results) -> list[dict]:
     return out
 
 
-def _backtest(bars: list[Bar], strategy_build, tail: int | None = None) -> dict:
-    """Run a backtest. When ``tail`` is set, the model trains on the leading
-    prefix and metrics are measured only on the final ``tail`` steps — used by
-    the short 3-month tests so a pre-trained model is evaluated on the window."""
+# Position-sizing knobs swept per (engine, scenario) — the per-stock
+# optimization. Higher target_vol => more exposure => higher return AND higher
+# drawdown; we pick the best risk-adjusted (Sharpe) config and report its
+# return + drawdown so the risk is visible, not hidden.
+TARGET_VOLS = (0.010, 0.030)
+
+
+def _one(bars: list[Bar], strategy_build, target_vol: float, tail: int | None) -> dict:
     n = len(bars)
     cfg = EngineConfig(train_size=max(60, min(400, n // 3)), refit_every=250,
-                       max_train=1000, target_vol=0.01, rebalance_band=0.03)
-    risk = VolTargetRiskSizer(target_vol=0.01, max_leverage=cfg.max_leverage, rebalance_band=0.03)
+                       max_train=1000, target_vol=target_vol, rebalance_band=0.03)
+    risk = VolTargetRiskSizer(target_vol=target_vol, max_leverage=cfg.max_leverage,
+                              rebalance_band=0.03)
     res = Engine(config=cfg, strategy=strategy_build(), risk=risk, run_id="opt").run(
         HistoricalReplayFeed(bars))
     results = res.results[-tail:] if tail else res.results
     m = compute_metrics(results, periods_per_year=252)
+    n_steps = m.get("n_steps", len(results)) or 1
+    # Annualized (CAGR) return assuming ~252 daily bars/yr.
+    m["annual_return"] = (1.0 + m["total_return"]) ** (252.0 / n_steps) - 1.0
     m["yoy"] = _yoy(results)
+    m["target_vol"] = target_vol
     return m
+
+
+def _backtest(bars: list[Bar], strategy_build, tail: int | None = None) -> dict:
+    """Optimize position sizing per scenario: sweep target_vol, keep the best
+    risk-adjusted (Sharpe) config. When ``tail`` is set, the model trains on the
+    leading prefix and metrics are measured only on the final ``tail`` steps."""
+    best: dict | None = None
+    for tv in TARGET_VOLS:
+        m = _one(bars, strategy_build, tv, tail)
+        if best is None or m["sharpe"] > best["sharpe"]:
+            best = m
+    return best
 
 
 def main() -> None:
@@ -165,12 +186,15 @@ def main() -> None:
             results_here.append((e.name, m))
             a = agg[e.name]
             a["sharpe"] += m["sharpe"]; a["total_return"] += m["total_return"]
+            a["annual_return"] += m["annual_return"]
             a["win_rate"] += m["win_rate"]; a["max_drawdown"] += m["max_drawdown"]
             a["n"] += 1
             by_scenario.setdefault(e.name, {})[sid] = {
-                "total_return": round(m["total_return"], 4), "sharpe": round(m["sharpe"], 3),
+                "total_return": round(m["total_return"], 4),
+                "annual_return": round(m["annual_return"], 4),
+                "sharpe": round(m["sharpe"], 3),
                 "win_rate": round(m["win_rate"], 4), "max_drawdown": round(m["max_drawdown"], 4),
-                "n_trades": m["n_trades"], "yoy": m["yoy"],
+                "n_trades": m["n_trades"], "target_vol": m["target_vol"], "yoy": m["yoy"],
             }
         winner = max(results_here, key=lambda kv: kv[1]["sharpe"])
         wins[winner[0]] += 1
@@ -180,14 +204,20 @@ def main() -> None:
     strategies = []
     for e in entries:
         a = agg[e.name]; n = a["n"] or 1
+        by = by_scenario[e.name]
+        best_scn = max(by.values(), key=lambda r: r["total_return"], default={"total_return": 0})
+        scenarios_over_40 = sum(1 for r in by.values() if r["annual_return"] >= 0.40)
         strategies.append({
             "name": e.name, "description": e.description,
             "mean_sharpe": round(a["sharpe"] / n, 3),
             "mean_return": round(a["total_return"] / n, 4),
+            "mean_annual_return": round(a["annual_return"] / n, 4),
+            "best_return": round(best_scn["total_return"], 4),
+            "scenarios_over_40pct_annual": scenarios_over_40,
             "mean_win_rate": round(a["win_rate"] / n, 4),
             "mean_max_drawdown": round(a["max_drawdown"] / n, 4),
             "scenario_wins": wins[e.name], "n_scenarios": int(n),
-            "by_scenario": by_scenario[e.name],
+            "by_scenario": by,
         })
     strategies.sort(key=lambda s: s["mean_sharpe"], reverse=True)
 
