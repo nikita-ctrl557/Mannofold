@@ -1,18 +1,21 @@
-"""Majority-vote win-rate strategy: four independent voters requiring unanimous (>=3/4) agreement.
+"""Majority-vote win-rate strategy.
 
-Four voters:
-  (1) sign(drift)          = sign(fwd_return_mean)
-  (2) sign(EMA-drift)      = sign(per-symbol EMA of fwd_return_mean, no lookahead)
-  (3) sign(carry)          = sign(mu / (sig^2 + eps))
-  (4) density-confidence   = positive vote only when density + regime_prob are both high
+Four independent voters:
+  (1) sign(drift)             — instantaneous direction
+  (2) sign(EMA-drift)         — smoothed per-symbol direction (no lookahead)
+  (3) sign(carry)             — mu / (sig^2 + eps), risk-adjusted drift
+  (4) density-confidence vote — votes with mu when density AND regime_prob are
+                                both high enough; abstains (0) otherwise
 
-Require >=3 of 4 voters to agree before taking a position; otherwise flat.
-High agreement -> high hit rate -> positive expectancy.
+Require UNANIMOUS 4/4 agreement AND |sharpe| > _SHARPE_MIN to take a position;
+otherwise flat.  Strong unanimity + Sharpe threshold filters for high-quality
+setups, targeting a high hit rate.
 
-weight = consensus_dir * tanh(gain * tanh(sharpe)) * (n_agree/4) * confidence
+weight = consensus_dir * tanh(GAIN * tanh(sharpe)) * confidence
 confidence = regime_prob * (1 - anomaly_score)
-Flat on ANOMALY_REGIME, anomaly > 0.6, or fewer than 3 voters agreeing.
-Dead-band |w| < 0.04 -> 0.
+
+Flat on ANOMALY_REGIME, anomaly > 0.6, or fewer than 4 voters agreeing,
+or |sharpe| below threshold. Dead-band |w| < 0.04 -> 0.
 """
 
 from __future__ import annotations
@@ -29,22 +32,24 @@ from mannofold.contracts.models import (
 
 NAME = "majority_vote_winrate"
 DESCRIPTION = (
-    "Four-voter unanimous/supermajority strategy (>=3/4 agreement required); "
-    "voters: drift-sign, EMA-drift-sign, carry-sign, density-confidence gate. "
-    "High agreement threshold drives a high win rate with positive expectancy."
+    "Four-voter UNANIMOUS consensus (4/4 required); voters: drift-sign, "
+    "EMA-drift-sign, carry-sign, density-confidence gate.  Only acts when all "
+    "four voters agree AND |Sharpe| exceeds a threshold — targets high win rate "
+    "with positive expectancy by restricting to the highest-conviction setups."
 )
 
 _EPS = 1e-9
-_GAIN = 3.0
-_ANOMALY_THRESH = 0.5
-_DEAD_BAND = 0.05
-_EMA_ALPHA = 0.05         # slow smoothing for per-symbol EMA of drift
-_MIN_AGREE = 3            # minimum voters agreeing to take a position (out of 4)
-# Density/regime thresholds for the density-confidence voter
-_DENSITY_THRESH = 1.0     # density gate mid-point (logistic)
-_DENSITY_SCALE = 2.0
+_GAIN = 2.5
+_ANOMALY_THRESH = 0.6
+_DEAD_BAND = 0.04
+_EMA_ALPHA = 0.05         # slow EMA — fewer sign flips, more stability
+_MIN_AGREE = 4            # require ALL four voters to agree (unanimous)
+_SHARPE_MIN = 0.3         # minimum |sharpe| to trade (quality filter)
+# Density gate parameters (density range ~0.18..0.77 in practice)
+_DENSITY_MID = 0.5        # sigmoid mid-point in the actual density range
+_DENSITY_SCALE = 5.0      # steepness
 _DENSITY_CLAMP = 50.0
-_REGIME_PROB_THRESH = 0.6 # regime_prob must exceed this for voter 4 to be directional
+_REGIME_PROB_THRESH = 0.6  # regime_prob threshold for voter 4 to cast a vote
 
 
 def _sign(x: float) -> int:
@@ -57,23 +62,23 @@ def _sign(x: float) -> int:
 
 
 def _density_gate(density: float) -> float:
-    """Smooth gate in [0,1]: low density -> ~0, high density -> ~1."""
+    """Smooth sigmoid gate [0, 1]: low density -> ~0, high density -> ~1."""
     d = max(0.0, min(density, _DENSITY_CLAMP))
-    return 1.0 / (1.0 + math.exp(-_DENSITY_SCALE * (d - _DENSITY_THRESH)))
+    return 1.0 / (1.0 + math.exp(-_DENSITY_SCALE * (d - _DENSITY_MID)))
 
 
 class MajorityVoteWinRateStrategy:
-    """Four-voter supermajority strategy targeting high hit rate."""
+    """Four-voter unanimous strategy targeting high hit rate."""
 
     def __init__(self) -> None:
         # Per-symbol EMA of fwd_return_mean (updated online, no lookahead)
         self._ema: dict[str, float] = {}
 
     # ------------------------------------------------------------------ #
-    #  signals()                                                           #
+    #  signals()                                                          #
     # ------------------------------------------------------------------ #
     def signals(self, state: ManifoldState) -> SignalSet:
-        mu  = state.fwd_return_mean
+        mu = state.fwd_return_mean
         sig = state.fwd_return_std
         sym = state.symbol
 
@@ -85,24 +90,25 @@ class MajorityVoteWinRateStrategy:
         ema_drift = self._ema[sym]
 
         # ---- Four voters ----
-        v1 = _sign(mu)                                      # instantaneous drift sign
-        v2 = _sign(ema_drift)                               # smoothed EMA-drift sign
+        v1 = _sign(mu)                     # instantaneous drift sign
+        v2 = _sign(ema_drift)              # smoothed EMA-drift sign
         carry = mu / (sig * sig + _EPS)
-        v3 = _sign(carry)                                   # carry = mu / variance
+        v3 = _sign(carry)                  # carry = mu / variance
 
-        # Voter 4: density-confidence gate — votes in the direction of the EMA drift
-        # (smoother, less noisy than instantaneous drift) only when both density
+        # Voter 4: density-confidence gate
+        # Votes in direction of instantaneous drift only when both density
         # and regime_prob are high enough to trust the environment.
         gate = _density_gate(state.density)
         if gate > 0.5 and state.regime_prob > _REGIME_PROB_THRESH:
-            v4 = _sign(ema_drift)   # trusted env: agree with smoothed drift direction
+            v4 = _sign(mu)   # trusted environment: align with drift
         else:
-            v4 = 0                  # low confidence: abstain
+            v4 = 0           # low-confidence environment: abstain
 
         votes = [v1, v2, v3, v4]
         n_pos = sum(1 for v in votes if v > 0)
         n_neg = sum(1 for v in votes if v < 0)
 
+        # Determine consensus — require unanimous (4/4)
         if n_pos >= _MIN_AGREE:
             consensus_dir = 1
             n_agree = n_pos
@@ -113,12 +119,15 @@ class MajorityVoteWinRateStrategy:
             consensus_dir = 0
             n_agree = 0
 
+        # Sharpe for sizing
+        sharpe = mu / (sig + _EPS)
+
         # Confidence = regime certainty * non-anomalousness
         confidence = max(0.0, min(1.0, state.regime_prob * (1.0 - state.anomaly_score)))
 
-        # Composite signal: direction * normalised sharpe * agreement fraction
-        if consensus_dir != 0:
-            sharpe = mu / (sig + _EPS)
+        # Composite: direction * tanh-squashed sharpe * agreement fraction
+        # Only non-zero when unanimous AND sharpe passes quality threshold
+        if consensus_dir != 0 and abs(sharpe) >= _SHARPE_MIN:
             strength = math.tanh(_GAIN * math.tanh(sharpe))
             composite = consensus_dir * abs(strength) * (n_agree / 4.0)
         else:
@@ -135,7 +144,7 @@ class MajorityVoteWinRateStrategy:
         )
 
     # ------------------------------------------------------------------ #
-    #  target()                                                            #
+    #  target()                                                           #
     # ------------------------------------------------------------------ #
     def target(self, signals: SignalSet) -> TargetPosition:
         # Hard gates
