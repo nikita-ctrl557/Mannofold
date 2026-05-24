@@ -37,18 +37,18 @@ DESCRIPTION = (
 )
 
 _EPS = 1e-9
-# Moderate gain; not as aggressive as aggressive_smoothed — steadiness over conviction.
-_GAIN = 2.0
+# Moderate-high gain for sufficient conviction once Sharpe is meaningful.
+_GAIN = 3.0
 # Anomaly gate: go flat above this threshold.
 _ANOMALY_GATE = 0.6
 # Dead-band: zero tiny positions to avoid noise trading.
 _DEADBAND = 0.04
 # Slow EMA for fwd_return_std tracking (long memory → stable vol estimate).
-_STD_EMA_ALPHA = 0.08
-# Heavy smoothing on the final target weight (very slow → low monthly variance).
-_WEIGHT_EMA_ALPHA = 0.10
+_STD_EMA_ALPHA = 0.10
+# Heavy smoothing on the final target weight (slow → low monthly variance).
+_WEIGHT_EMA_ALPHA = 0.15
 # Target per-period risk level; positions are sized so ema_std * weight ≈ target_risk.
-_TARGET_RISK = 0.015
+_TARGET_RISK = 0.02
 
 
 class SteadyMonthlyVolStrategy:
