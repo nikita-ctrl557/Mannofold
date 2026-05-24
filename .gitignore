@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Data artifacts (regenerable)
+data/
+*.duckdb
+*.duckdb.wal
+
+# Secrets — NEVER commit Alpaca / API keys
+.env
+.env.*
+!.env.example
+
+# Node / frontend
+web/node_modules/
+web/dist/
+web/.vite/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Obsidian local state (keep the notes, drop the workspace cache)
+vault/.obsidian/workspace*
+vault/.obsidian/cache
+
+# Generated static run bundle (reproduce with scripts/build_web_runs.py)
+web/public/runs/
