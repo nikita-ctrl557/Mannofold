@@ -34,7 +34,7 @@ _BETA = 0.5          # mean-field order-parameter exponent (β = 0.5)
 _GAIN = 60.0         # tanh amplification on the Sharpe proxy
 _ANOMALY_GATE = 0.6  # hard-flat above this anomaly_score
 _DEADBAND = 0.04     # |weight| below this collapses to 0
-_DENSITY_CAP = 5.0   # cap raw density before normalising to [0,1]
+_DENSITY_CAP = 1.0   # density is already in [0,1]; cap at 1.0
 
 
 class PercolationThresholdStrategy:

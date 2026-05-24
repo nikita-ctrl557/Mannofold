@@ -4,13 +4,13 @@ Physics perspective: in the renormalization group (RG) framework, a signal that
 survives unchanged under coarse-graining (i.e. looks the same at every scale) is
 at a *fixed point* — it is structural, not noise.  We operationalize this idea by
 computing the drift EMA at three timescales (fast, mid, slow).  When all three
-scales agree in sign *and* magnitude (scale-invariant), we have a robust fixed-
-point signal worth trading at full size.  When the signs flip across scales, the
-signal is scale-dependent (UV/IR mismatch) → noise → small position.
+scales agree in sign (scale-invariant), we have a robust fixed-point signal worth
+trading at full size.  When the signs flip across scales, the signal is
+scale-dependent (UV/IR mismatch) → noise → flat.
 
-coherence  = sign_agreement × min(|fast|, |mid|, |slow|)
-           (zero if any two scales disagree in sign)
-target_weight = coherent_dir · tanh(GAIN · coherence · |tanh(sharpe)|) · confidence
+coherence  = sign_agreement × min(|fast|, |mid|, |slow|) / (max + ε)
+           (normalized ratio in [0,1]; zero if any two scales disagree in sign)
+target_weight = coherent_dir · tanh(GAIN · |tanh(sharpe)| · coherence) · confidence
 confidence = regime_prob · (1 − anomaly_score)
 
 Flat on ANOMALY_REGIME, anomaly > 0.6, or scale-incoherent.
@@ -32,9 +32,9 @@ from mannofold.contracts.models import (
 NAME = "renorm_multiscale"
 DESCRIPTION = (
     "Renormalization-group multi-scale strategy: a drift signal that is "
-    "scale-invariant (same sign and similar magnitude across fast/mid/slow EMAs) "
-    "is treated as a robust fixed point worth trading at full size; scale-dependent "
-    "signals (sign flips across scales) are noise and receive minimal weight."
+    "scale-invariant (same sign across fast/mid/slow EMAs) is treated as a robust "
+    "fixed point worth trading at full size; scale-dependent signals (sign flips "
+    "across scales) are noise and receive zero weight."
 )
 
 # EMA decay rates (one per RG scale)
@@ -42,7 +42,7 @@ _FAST_ALPHA = 0.5    # fast / UV scale
 _MID_ALPHA  = 0.2    # intermediate scale
 _SLOW_ALPHA = 0.05   # slow / IR scale
 
-_GAIN           = 3.0   # amplifier inside outer tanh
+_GAIN           = 2.5   # amplifier inside outer tanh
 _ANOMALY_THRESH = 0.6   # anomaly_score above this → flat
 _DEAD_BAND      = 0.04  # collapse |weight| below this to 0
 
@@ -82,10 +82,14 @@ class RenormMultiscaleStrategy:
         signs_agree = (fast * mid > 0) and (mid * slow > 0)
         coherent_dir = math.copysign(1.0, fast) if signs_agree and fast != 0.0 else 0.0
 
-        # Coherence magnitude = minimum absolute EMA across scales
-        coherence = min(abs(fast), abs(mid), abs(slow)) if signs_agree else 0.0
+        # Normalized coherence: min / max ratio — 1 = perfectly scale-invariant
+        if signs_agree and fast != 0.0:
+            abs_vals = (abs(fast), abs(mid), abs(slow))
+            coherence = min(abs_vals) / (max(abs_vals) + 1e-12)
+        else:
+            coherence = 0.0
 
-        # Blended Sharpe uses the geometric mean of the three scales' magnitudes
+        # Blended Sharpe across all three scales
         blended_drift = (fast + mid + slow) / 3.0
         sharpe = blended_drift / (state.fwd_return_std + 1e-9)
 
@@ -93,12 +97,12 @@ class RenormMultiscaleStrategy:
         confidence = state.regime_prob * (1.0 - state.anomaly_score)
         confidence = max(0.0, min(1.0, confidence))
 
-        # Pack signals; store coherent_dir and coherence via momentum/expected_return
+        # Pack signals; store signed_coherence in expected_return for target()
         return SignalSet(
             ts=state.ts,
             symbol=sym,
             momentum=sharpe,
-            expected_return=coherence * coherent_dir,   # signed coherence
+            expected_return=coherence * coherent_dir,   # signed coherence [−1, 1]
             anomaly=state.anomaly_score,
             regime_id=state.regime_id,
             confidence=confidence,
@@ -123,7 +127,7 @@ class RenormMultiscaleStrategy:
             return TargetPosition(ts=signals.ts, symbol=sym, target_weight=0.0)
 
         inner = abs(math.tanh(signals.momentum))     # |tanh(sharpe)|
-        raw   = coherent_dir * math.tanh(_GAIN * coherence * inner) * signals.confidence
+        raw   = coherent_dir * math.tanh(_GAIN * inner * coherence) * signals.confidence
 
         # Dead-band
         if abs(raw) < _DEAD_BAND:
