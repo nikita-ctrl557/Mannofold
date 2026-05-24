@@ -114,11 +114,11 @@ export default function LeaderboardView() {
                 {s.name}
                 <span className="lb-desc">{s.description}</span>
               </span>
-              <span className="lb-num">{s.mean_sharpe.toFixed(2)}</span>
-              <span className={`lb-num ${cls(s.mean_return)}`}>{signed(s.mean_return)}</span>
-              <span className="lb-num">{pct(s.mean_win_rate)}</span>
-              <span className="lb-num bad">{pct(s.mean_max_drawdown)}</span>
-              <span className="lb-num">{s.scenario_wins}</span>
+              <span className="lb-num" data-label="Sharpe">{s.mean_sharpe.toFixed(2)}</span>
+              <span className={`lb-num ${cls(s.mean_return)}`} data-label="Return">{signed(s.mean_return)}</span>
+              <span className="lb-num" data-label="Win">{pct(s.mean_win_rate)}</span>
+              <span className="lb-num bad" data-label="MaxDD">{pct(s.mean_max_drawdown)}</span>
+              <span className="lb-num" data-label="Wins">{s.scenario_wins}</span>
             </div>
             {open === s.name && (
               <div className="lb-detail">
