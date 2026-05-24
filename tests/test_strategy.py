@@ -17,8 +17,8 @@ from datetime import UTC, datetime
 from mannofold.contracts.models import (
     ANOMALY_REGIME,
     PortfolioState,
-    SignalSet,
     Side,
+    SignalSet,
     TargetPosition,
 )
 from mannofold.signals.risk import VolTargetRiskSizer
