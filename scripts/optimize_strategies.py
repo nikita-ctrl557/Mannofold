@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import random
 from collections import OrderedDict, defaultdict
 from pathlib import Path
@@ -114,6 +115,12 @@ def build_scenarios() -> list[dict]:
         sc.append(dict(id=f"synth_3mo_{i+1}", label=f"SYNTH · random 3-month #{i+1}",
                        kind="synthetic", instrument="SYN-LONG", measure_tail=63,
                        note="3-month slice (pre-trained)", bars=win))
+    if os.environ.get("MANNO_FAST"):
+        # Fast mode: drop the multi-year VIX windows (~2.5k-3.8k bars each) that
+        # dominate runtime; keep regime-change, 3-month, AAPL and all synthetic
+        # scenarios so every dimension is still covered.
+        heavy = {"vix_15y", "vix_10y", "vix_5y"}
+        sc = [s for s in sc if s["id"] not in heavy]
     return sc
 
 
