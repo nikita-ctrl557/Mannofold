@@ -43,15 +43,15 @@ _ANOMALY_THRESH = 0.6
 # Dead-band
 _DEAD_BAND = 0.04
 
-# Heavy EMA smoothing (like trend_hold_long alpha=0.10) to keep turnover low
+# Heavy EMA smoothing to keep turnover low (like trend_hold_long alpha=0.10)
 _EMA_ALPHA = 0.10
 
 # Hold-decay: grace period before decay kicks in, then aggressive decay
 _GRACE_BARS = 3        # hold full EMA weight for this many bars
-_DECAY_RATE = 0.70     # per-bar decay after grace (moderately aggressive)
+_DECAY_RATE = 0.70     # per-bar decay after grace (aggressive take-profit)
 
 # Reset hold clock when decayed weight falls below this threshold
-_RESET_THRESH = 0.06
+_RESET_THRESH = 0.04
 
 
 class QuickProfitScalper:
