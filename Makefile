@@ -8,7 +8,7 @@ UVICORN := .venv/bin/uvicorn
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install synth backtest test lint api web demo
+.PHONY: help install synth backtest test lint api web demo dev
 
 help:  ## Show this help.
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -37,3 +37,6 @@ web:  ## Run the Vite dev server in web/.
 	npm --prefix web run dev
 
 demo: synth backtest api  ## Generate data, run a backtest, then serve the API.
+
+dev:  ## One command: set up, seed data, run API + dashboard at localhost:5173.
+	./scripts/run_local.sh
