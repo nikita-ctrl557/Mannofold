@@ -12,6 +12,9 @@ interface StrategyRow {
   name: string;
   description: string;
   mean_sharpe: number;
+  in_sample_sharpe: number;
+  holdout_sharpe: number;
+  robust: boolean;
   mean_return: number;
   mean_win_rate: number;
   mean_max_drawdown: number;
@@ -85,7 +88,8 @@ export default function LeaderboardView() {
           <div className="lb-title">strategy leaderboard</div>
           <div className="lb-sub">
             {lb.strategies.length} strategies · {lb.scenarios.length} backtests each ·
-            ranked by mean Sharpe across all scenarios
+            ranked by in-sample Sharpe · OOS = out-of-sample holdout (overfit check) ·
+            ✓ = robust (holds up out-of-sample)
           </div>
         </div>
         <div className="lb-gen">
@@ -97,11 +101,11 @@ export default function LeaderboardView() {
         <div className="lb-row lb-header">
           <span>#</span>
           <span>strategy</span>
-          <span>mean&nbsp;Sharpe</span>
+          <span>IS&nbsp;Sharpe</span>
+          <span>OOS&nbsp;Sharpe</span>
           <span>mean&nbsp;return</span>
           <span>win&nbsp;rate</span>
-          <span>mean&nbsp;maxDD</span>
-          <span>#&nbsp;wins</span>
+          <span>robust</span>
         </div>
         {lb.strategies.map((s, i) => (
           <div key={s.name}>
@@ -114,11 +118,11 @@ export default function LeaderboardView() {
                 {s.name}
                 <span className="lb-desc">{s.description}</span>
               </span>
-              <span className="lb-num" data-label="Sharpe">{s.mean_sharpe.toFixed(2)}</span>
+              <span className="lb-num" data-label="IS Sharpe">{s.in_sample_sharpe.toFixed(2)}</span>
+              <span className={`lb-num ${cls(s.holdout_sharpe)}`} data-label="OOS Sharpe">{s.holdout_sharpe.toFixed(2)}</span>
               <span className={`lb-num ${cls(s.mean_return)}`} data-label="Return">{signed(s.mean_return)}</span>
               <span className="lb-num" data-label="Win">{pct(s.mean_win_rate)}</span>
-              <span className="lb-num bad" data-label="MaxDD">{pct(s.mean_max_drawdown)}</span>
-              <span className="lb-num" data-label="Wins">{s.scenario_wins}</span>
+              <span className={`lb-num ${s.robust ? "good" : ""}`} data-label="Robust">{s.robust ? "✓" : "—"}</span>
             </div>
             {open === s.name && (
               <div className="lb-detail">

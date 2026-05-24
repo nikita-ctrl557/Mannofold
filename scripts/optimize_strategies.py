@@ -134,7 +134,16 @@ def _yoy(results) -> list[dict]:
 # optimization. Higher target_vol => more exposure => higher return AND higher
 # drawdown; we pick the best risk-adjusted (Sharpe) config and report its
 # return + drawdown so the risk is visible, not hidden.
-TARGET_VOLS = (0.010, 0.030)
+TARGET_VOLS = (0.020,)
+
+# Out-of-sample holdout: a diverse subset NEVER used to rank engines. We rank by
+# in-sample Sharpe and report holdout Sharpe alongside, so an engine that only
+# looks good on the scenarios it was selected on (overfit) is exposed. This is
+# the anti-overfit / "can't cheat at the selection level" safeguard.
+HOLDOUT_IDS = {
+    "vix_5y", "vix_covid", "vix_3mo_2", "aapl_full",
+    "synth_bear", "synth_crash", "synth_rand_3",
+}
 
 
 def _one(bars: list[Bar], strategy_build, target_vol: float, tail: int | None) -> dict:
@@ -189,6 +198,10 @@ def main() -> None:
             a["annual_return"] += m["annual_return"]
             a["win_rate"] += m["win_rate"]; a["max_drawdown"] += m["max_drawdown"]
             a["n"] += 1
+            if sid in HOLDOUT_IDS:
+                a["oos_sharpe"] += m["sharpe"]; a["oos_n"] += 1
+            else:
+                a["is_sharpe"] += m["sharpe"]; a["is_n"] += 1
             by_scenario.setdefault(e.name, {})[sid] = {
                 "total_return": round(m["total_return"], 4),
                 "annual_return": round(m["annual_return"], 4),
@@ -204,12 +217,19 @@ def main() -> None:
     strategies = []
     for e in entries:
         a = agg[e.name]; n = a["n"] or 1
+        is_n = a["is_n"] or 1; oos_n = a["oos_n"] or 1
+        is_sharpe = round(a["is_sharpe"] / is_n, 3)
+        oos_sharpe = round(a["oos_sharpe"] / oos_n, 3)
         by = by_scenario[e.name]
         best_scn = max(by.values(), key=lambda r: r["total_return"], default={"total_return": 0})
         scenarios_over_40 = sum(1 for r in by.values() if r["annual_return"] >= 0.40)
         strategies.append({
             "name": e.name, "description": e.description,
             "mean_sharpe": round(a["sharpe"] / n, 3),
+            "in_sample_sharpe": is_sharpe,
+            "holdout_sharpe": oos_sharpe,
+            # Robust = holds up out-of-sample (not just on selection scenarios).
+            "robust": bool(oos_sharpe > 0 and oos_sharpe >= is_sharpe - 0.3),
             "mean_return": round(a["total_return"] / n, 4),
             "mean_annual_return": round(a["annual_return"] / n, 4),
             "best_return": round(best_scn["total_return"], 4),
@@ -219,12 +239,16 @@ def main() -> None:
             "scenario_wins": wins[e.name], "n_scenarios": int(n),
             "by_scenario": by,
         })
-    strategies.sort(key=lambda s: s["mean_sharpe"], reverse=True)
+    # Rank by IN-SAMPLE Sharpe (selection), but holdout_sharpe reveals overfitting.
+    strategies.sort(key=lambda s: s["in_sample_sharpe"], reverse=True)
 
     payload = {
         "generated_at": dt.datetime.utcnow().isoformat() + "Z",
-        "scenarios": [{k: s[k] for k in ("id", "label", "kind", "instrument", "note")}
-                      for s in scenarios],
+        "scenarios": [
+            {**{k: s[k] for k in ("id", "label", "kind", "instrument", "note")},
+             "split": "holdout" if s["id"] in HOLDOUT_IDS else "in_sample"}
+            for s in scenarios
+        ],
         "ranking": [s["name"] for s in strategies],
         "best_per_scenario": best_per_scenario,
         "strategies": strategies,
