@@ -1,0 +1,311 @@
+:root {
+  --bg: #0a0c10;
+  --panel: #11151c;
+  --panel-2: #161b24;
+  --border: #232a36;
+  --fg: #c8d0dc;
+  --fg-dim: #6b7686;
+  --accent: #4e79a7;
+  --good: #59a14f;
+  --bad: #e15759;
+  --warn: #edc948;
+  --mono: "SFMono-Regular", "JetBrains Mono", "Menlo", "Consolas", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---- header KPI strip ---- */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 14px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.brand {
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--fg);
+  font-size: 13px;
+}
+.brand .dot {
+  color: var(--accent);
+}
+.kpis {
+  display: flex;
+  gap: 20px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.kpi {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.kpi .label {
+  color: var(--fg-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.kpi .val {
+  font-size: 14px;
+  font-weight: 600;
+}
+.kpi .val.good {
+  color: var(--good);
+}
+.kpi .val.bad {
+  color: var(--bad);
+}
+
+.live-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.live-btn {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+  letter-spacing: 1px;
+}
+.live-btn.on {
+  border-color: var(--good);
+  color: var(--good);
+}
+.status {
+  color: var(--fg-dim);
+  font-size: 10px;
+  min-width: 90px;
+}
+.src-tag {
+  font-size: 10px;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+/* ---- grid ---- */
+.grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1.7fr 1fr 1fr;
+  grid-template-rows: 1.4fr 1fr 1fr;
+  gap: 8px;
+  padding: 8px;
+  min-height: 0;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.panel > .title {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.panel > .body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: auto;
+}
+
+.manifold-panel {
+  grid-row: span 2;
+}
+
+/* deck.gl host */
+.deck-host {
+  position: absolute;
+  inset: 0;
+}
+
+/* tooltip */
+.tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(8, 10, 14, 0.95);
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  font-size: 10px;
+  border-radius: 3px;
+  z-index: 10;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.tooltip .k {
+  color: var(--fg-dim);
+}
+
+/* tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+th {
+  text-align: left;
+  color: var(--fg-dim);
+  font-weight: 500;
+  padding: 3px 7px;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+td {
+  padding: 2px 7px;
+  border-bottom: 1px solid rgba(35, 42, 54, 0.5);
+  white-space: nowrap;
+}
+tr:hover td {
+  background: var(--panel-2);
+}
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.pos {
+  color: var(--good);
+}
+.neg {
+  color: var(--bad);
+}
+.side-buy {
+  color: var(--good);
+}
+.side-sell {
+  color: var(--bad);
+}
+
+.swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+/* uPlot host */
+.chart-host {
+  width: 100%;
+  height: 100%;
+}
+
+/* feature heatmap */
+.heat {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+}
+.heat .cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.heat .name {
+  width: 90px;
+  color: var(--fg-dim);
+  font-size: 10px;
+  text-align: right;
+}
+.heat .bar-wrap {
+  flex: 1;
+  height: 14px;
+  background: var(--panel-2);
+  position: relative;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.heat .bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+.heat .v {
+  width: 52px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--fg-dim);
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--fg-dim);
+  letter-spacing: 2px;
+}
+
+/* uPlot dark overrides */
+.uplot {
+  font-family: var(--mono) !important;
+}
+.u-legend {
+  font-size: 10px !important;
+  color: var(--fg-dim) !important;
+}
+.u-legend .u-marker {
+  width: 8px !important;
+  height: 8px !important;
+}

@@ -54,6 +54,19 @@ class LocalStateStore:
             json.dumps([r.model_dump(mode="json") for r in regimes])
         )
 
+    def load_steps_df(self, run_id: str) -> pd.DataFrame:
+        """Read ``data/runs/{run_id}/steps.parquet`` into a DataFrame.
+
+        Additive convenience for the analytics layer. Returns an empty DataFrame
+        if the run produced no trading steps (no parquet written).
+        """
+        path = self.data_dir / "runs" / run_id / "steps.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        return duckdb.connect().execute(
+            "SELECT * FROM read_parquet(?)", [str(path)]
+        ).df()
+
     def query(self, sql: str) -> list[dict]:
         con = duckdb.connect()
         try:
