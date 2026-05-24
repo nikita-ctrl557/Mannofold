@@ -11,6 +11,9 @@ where:
     sharpe       = fwd_return_mean / (fwd_return_std + eps)
     calm_gate    = density_sigmoid * vol_gate   (~1 only when calm)
     confidence   = regime_prob * (1 - anomaly_score)
+
+Additional guard: only fade SMALL deviations (|sharpe| < MAX_SHARPE_ABS) to
+avoid fighting strong trends. Large neighbourhood Sharpe -> skip, not fade.
 """
 
 from __future__ import annotations
@@ -27,31 +30,35 @@ from mannofold.contracts.models import (
 
 NAME = "high_winrate_meanrev"
 DESCRIPTION = (
-    "High-win-rate contrarian fade: only trades in calm, high-density, low-dispersion "
-    "regimes where mean reversion is reliable; stays flat in trending/anomalous states."
+    "High-win-rate contrarian fade: trades only in calm, high-density, low-dispersion "
+    "regimes on SMALL deviations (|sharpe|<1) where mean reversion is reliable; "
+    "stays flat in trending/anomalous/high-vol states."
 )
 
 _EPS = 1e-9
 
-# --- inner tanh gain: keeps weight small (many tiny wins, not rare big ones)
-_GAIN = 2.0
+# Outer tanh gain — pushes weight toward ±1 for decisive but bounded positions.
+_GAIN = 15.0
 
-# --- density gate: sigmoid centred on _DENSITY_MID; high density -> gate near 1
-#     density values typically range 0.18..0.77 in practice; mid at ~0.45
-_DENSITY_MID = 0.45
-_DENSITY_SCALE = 8.0
+# Density gate: steep sigmoid so only truly high-density bars pass.
+# density range ~0.18..0.77; mid=0.50 means the top half trades.
+_DENSITY_MID = 0.50
+_DENSITY_SCALE = 20.0   # sharp transition
 _DENSITY_CLAMP = 50.0
 
-# --- volatility gate: fwd_return_std above _VOL_HIGH -> gate collapses to 0
-#     uses a soft inverted sigmoid so the transition is smooth
-#     typical fwd_std range ~0.01..0.037; low-vol threshold ~0.018
-_VOL_HIGH = 0.020      # std above which calm_gate ~ 0
-_VOL_SCALE = 200.0     # steepness of the vol gate
+# Volatility gate: inverted sigmoid; low fwd_return_std -> gate~1.
+# fwd_std range ~0.010..0.037; cutoff at 0.018 keeps only the calmest bars.
+_VOL_HIGH = 0.018       # std above which vol_gate -> 0
+_VOL_SCALE = 250.0      # steepness of the inverted sigmoid
 
-# --- hard anomaly cut-off
+# Small-deviation guard: skip bars where neighbourhood Sharpe is large.
+# A large |sharpe| means the regime is trending hard — reversion is risky.
+_MAX_SHARPE_ABS = 1.0
+
+# Hard anomaly cut-off: go flat when state is off-manifold.
 _ANOMALY_GATE = 0.6
 
-# --- dead-band: suppress micro positions
+# Dead-band: suppress micro positions that add noise without return.
 _DEADBAND = 0.04
 
 
@@ -62,12 +69,21 @@ def _density_sigmoid(density: float) -> float:
 
 
 def _vol_gate(fwd_return_std: float) -> float:
-    """Smooth gate [0,1]: high vol -> ~0, low vol -> ~1."""
+    """Smooth gate [0,1]: high dispersion -> ~0, low dispersion -> ~1."""
     return 1.0 / (1.0 + math.exp(_VOL_SCALE * (fwd_return_std - _VOL_HIGH)))
 
 
 class HighWinrateMeanRevStrategy:
-    """Calm-gated contrarian fade producing many small wins, few big losses."""
+    """Calm-gated contrarian fade of small deviations for maximum win rate.
+
+    Trades only when:
+      - manifold density is high (typical, well-mapped region)
+      - fwd_return_std is low (calm, predictable regime)
+      - neighbourhood Sharpe is modest (small deviation — reversion likely)
+      - regime_id != ANOMALY_REGIME and anomaly_score < 0.6
+
+    Stays flat otherwise, avoiding the large losses that destroy expectancy.
+    """
 
     def signals(self, state: ManifoldState) -> SignalSet:
         sharpe = state.fwd_return_mean / (state.fwd_return_std + _EPS)
@@ -75,6 +91,9 @@ class HighWinrateMeanRevStrategy:
         vol_g = _vol_gate(state.fwd_return_std)
         calm_gate = density_g * vol_g
         confidence = max(0.0, state.regime_prob * (1.0 - state.anomaly_score))
+        # Small-deviation guard: zero confidence when Sharpe is large (trending).
+        if abs(sharpe) > _MAX_SHARPE_ABS:
+            confidence = 0.0
         return SignalSet(
             ts=state.ts,
             symbol=state.symbol,
@@ -86,13 +105,16 @@ class HighWinrateMeanRevStrategy:
         )
 
     def target(self, signals: SignalSet) -> TargetPosition:
+        # Hard gates: anomalous regime or elevated anomaly score -> flat.
         if signals.regime_id == ANOMALY_REGIME or signals.anomaly > _ANOMALY_GATE:
             return TargetPosition(ts=signals.ts, symbol=signals.symbol, target_weight=0.0)
 
-        # Contrarian fade: negate the neighbourhood Sharpe direction, scaled by calm confidence
+        # Contrarian fade: negate the neighbourhood Sharpe direction.
+        # confidence already embeds calm_gate * small-deviation guard.
         raw_fade = -math.tanh(_GAIN * signals.momentum)
-        weight = raw_fade * signals.confidence  # confidence already embeds calm_gate
+        weight = raw_fade * signals.confidence
 
+        # Dead-band: collapse negligible weights to flat.
         if abs(weight) < _DEADBAND:
             weight = 0.0
 
