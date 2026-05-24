@@ -3,12 +3,13 @@
 Takes modest trend positions, but AGGRESSIVELY de-grosses at the first sign of
 trouble — if anomaly rises or per-symbol conviction drops from its recent peak,
 cut to flat immediately (keeps losing bars few and small). Re-enters only on a
-clean signal above the entry threshold.
+clean signal above the entry threshold. This skews the win/loss asymmetry
+favorably.
 
 weight = tanh(GAIN * tanh(sharpe)) * cut_factor * confidence
   cut_factor drops fast when anomaly rises OR conviction falls below TRAIL_FRAC
   of the per-symbol peak seen since entry.
-  confidence = regime_prob * (1 - anomaly_score)
+  confidence = regime_prob * (1 - anomaly_score) * density_gate
 
 Flat on ANOMALY_REGIME or anomaly > ~0.6.
 Dead-band: |w| < 0.04 -> 0.
@@ -29,22 +30,32 @@ from mannofold.contracts.models import (
 
 NAME = "asymmetric_payoff"
 DESCRIPTION = (
-    "High win-rate trend strategy: take modest positions with aggressive "
-    "de-grossing when anomaly rises or per-symbol conviction drops from its "
-    "recent peak, keeping losses small and re-entering only on clean signals."
+    "High win-rate asymmetric strategy: modest trend positions in high-density "
+    "manifold regions, with immediate exit when anomaly rises or per-symbol "
+    "conviction drops from its recent peak; keeps losses small and re-enters "
+    "only on clean signals."
 )
 
 # ---- tunable knobs --------------------------------------------------------
-_GAIN           = 3.0    # outer gain inside double-tanh
-_ANOMALY_THRESH = 0.60   # hard flat at or above this anomaly score
-_ANOMALY_RAMP   = 0.30   # cut_factor starts declining above this level
-_DEAD_BAND      = 0.04   # suppress |weight| below this to 0
-_ENTRY_THRESH   = 0.08   # minimum |weight| to open / re-enter a position
-_TRAIL_FRAC     = 0.45   # exit if |weight| < TRAIL_FRAC * peak since entry
+_GAIN            = 50.0   # outer gain inside double-tanh (saturates quickly -> binary-ish)
+_ANOMALY_THRESH  = 0.60   # hard flat at or above this anomaly score
+_ANOMALY_RAMP    = 0.30   # cut_factor starts declining above this level
+_DENSITY_MID     = 1.0    # density at which density gate = 0.5
+_DENSITY_SCALE   = 2.0    # steepness of density sigmoid
+_DENSITY_CLAMP   = 50.0   # defensive upper bound for density
+_DEAD_BAND       = 0.04   # suppress |weight| below this to 0
+_ENTRY_THRESH    = 0.10   # minimum |weight| to open / re-enter a position
+_TRAIL_FRAC      = 0.50   # exit if |weight| < TRAIL_FRAC * peak since entry
+
+
+def _density_gate(density: float) -> float:
+    """Smooth sigmoid gate: low density -> ~0, high density -> ~1."""
+    d = max(0.0, min(density, _DENSITY_CLAMP))
+    return 1.0 / (1.0 + math.exp(-_DENSITY_SCALE * (d - _DENSITY_MID)))
 
 
 class AsymmetricPayoffStrategy:
-    """Trend follow with aggressive cut on anomaly or conviction drawdown."""
+    """Trend follow in dense manifold regions with aggressive cut on trouble."""
 
     def __init__(self) -> None:
         self._in_position: dict[str, bool]  = {}
@@ -55,7 +66,8 @@ class AsymmetricPayoffStrategy:
     #  signals()                                                              #
     # ---------------------------------------------------------------------- #
     def signals(self, state: ManifoldState) -> SignalSet:
-        confidence = state.regime_prob * (1.0 - state.anomaly_score)
+        gate = _density_gate(state.density)
+        confidence = state.regime_prob * (1.0 - state.anomaly_score) * gate
         confidence = max(0.0, min(1.0, confidence))
         sharpe = state.fwd_return_mean / (state.fwd_return_std + 1e-9)
         return SignalSet(
@@ -118,15 +130,15 @@ class AsymmetricPayoffStrategy:
             self._peak_w[sym] = abs_w
             peak = abs_w
 
-        # trailing stop on conviction drawdown
+        # trailing stop: conviction decayed below fraction of peak -> cut immediately
         if peak > 0.0 and abs_w < _TRAIL_FRAC * peak:
             return _flat()
 
-        # too small after dead-band
+        # too small after dead-band -> exit
         if abs_w < _DEAD_BAND:
             return _flat()
 
-        # sign flip: flip only with sufficient conviction, else cut
+        # sign flip: flip only with sufficient conviction, else cut to flat
         current_stance = self._stance.get(sym, 0)
         new_stance = 1 if weight > 0 else (-1 if weight < 0 else 0)
         if new_stance != 0 and new_stance != current_stance:
