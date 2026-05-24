@@ -1,19 +1,21 @@
-"""Asymmetric-payoff strategy: high win-rate with positive expectancy.
+"""Asymmetric-payoff strategy: HIGH WIN RATE with positive expectancy.
 
-Takes modest trend positions, but AGGRESSIVELY de-grosses at the first sign of
-trouble — if anomaly rises or per-symbol conviction drops from its recent peak,
-cut to flat immediately (keeps losing bars few and small). Re-enters only on a
-clean signal above the entry threshold. This skews the win/loss asymmetry
-favorably.
+Takes modest trend positions in HIGH-DENSITY manifold regions (signal quality
+is highest there), but AGGRESSIVELY de-grosses at the first sign of trouble:
 
-weight = tanh(GAIN * tanh(sharpe)) * cut_factor * confidence
-  cut_factor drops fast when anomaly rises OR conviction falls below TRAIL_FRAC
-  of the per-symbol peak seen since entry.
-  confidence = regime_prob * (1 - anomaly_score) * density_gate
+  * anomaly rises above _ANOMALY_RAMP -> linear cut_factor haircut
+  * per-symbol conviction drops below _TRAIL_FRAC of its peak since entry -> flat
 
-Flat on ANOMALY_REGIME or anomaly > ~0.6.
-Dead-band: |w| < 0.04 -> 0.
-Per-symbol state, no lookahead. build() takes no args.
+Re-enters only on a clean signal above _ENTRY_THRESH. This skews the win/loss
+asymmetry favorably: many small wins, and the rare losses stay small.
+
+weight = tanh(GAIN * tanh(sharpe_proxy)) * cut_factor * confidence
+  sharpe_proxy = expected_return / tanh(sharpe)  (amplifies marginal signals)
+  confidence   = regime_prob * (1 - anomaly_score) * density_gate
+  cut_factor   = 1 when anomaly <= _ANOMALY_RAMP, linearly -> 0 at _ANOMALY_THRESH
+
+Flat on ANOMALY_REGIME or anomaly > _ANOMALY_THRESH (~0.6).
+Dead-band: |w| < 0.04 -> 0. Per-symbol state, no lookahead. build() no args.
 """
 
 from __future__ import annotations
@@ -30,32 +32,31 @@ from mannofold.contracts.models import (
 
 NAME = "asymmetric_payoff"
 DESCRIPTION = (
-    "High win-rate asymmetric strategy: modest trend positions in high-density "
-    "manifold regions, with immediate exit when anomaly rises or per-symbol "
-    "conviction drops from its recent peak; keeps losses small and re-enters "
-    "only on clean signals."
+    "High win-rate asymmetric strategy: trend in dense manifold regions with "
+    "immediate exit when anomaly rises or per-symbol conviction drops from its "
+    "recent peak — many small wins, rare losses stay small."
 )
 
 # ---- tunable knobs --------------------------------------------------------
-_GAIN            = 50.0   # outer gain inside double-tanh (saturates quickly -> binary-ish)
-_ANOMALY_THRESH  = 0.60   # hard flat at or above this anomaly score
-_ANOMALY_RAMP    = 0.30   # cut_factor starts declining above this level
-_DENSITY_MID     = 1.0    # density at which density gate = 0.5
-_DENSITY_SCALE   = 2.0    # steepness of density sigmoid
-_DENSITY_CLAMP   = 50.0   # defensive upper bound for density
-_DEAD_BAND       = 0.04   # suppress |weight| below this to 0
-_ENTRY_THRESH    = 0.10   # minimum |weight| to open / re-enter a position
-_TRAIL_FRAC      = 0.50   # exit if |weight| < TRAIL_FRAC * peak since entry
+_GAIN           = 60.0   # amplifier: tanh(GAIN * tanh(sharpe_proxy)) saturates fast
+_ANOMALY_THRESH = 0.60   # hard flat at or above this anomaly score
+_ANOMALY_RAMP   = 0.20   # cut_factor starts declining above this level
+_DENSITY_MID    = 1.0    # density at which density gate = 0.5
+_DENSITY_SCALE  = 2.0    # steepness of density sigmoid
+_DENSITY_CLAMP  = 50.0   # defensive upper clamp for density
+_DEAD_BAND      = 0.04   # suppress |weight| below this to 0
+_ENTRY_THRESH   = 0.08   # minimum |weight| to open / re-enter a position
+_TRAIL_FRAC     = 0.30   # exit when |weight| < TRAIL_FRAC * peak since entry
 
 
 def _density_gate(density: float) -> float:
-    """Smooth sigmoid gate: low density -> ~0, high density -> ~1."""
+    """Smooth sigmoid gate in [0, 1]: low density -> ~0, high density -> ~1."""
     d = max(0.0, min(density, _DENSITY_CLAMP))
     return 1.0 / (1.0 + math.exp(-_DENSITY_SCALE * (d - _DENSITY_MID)))
 
 
 class AsymmetricPayoffStrategy:
-    """Trend follow in dense manifold regions with aggressive cut on trouble."""
+    """Trend-follow in dense manifold regions; cut fast on first trouble sign."""
 
     def __init__(self) -> None:
         self._in_position: dict[str, bool]  = {}
@@ -66,14 +67,17 @@ class AsymmetricPayoffStrategy:
     #  signals()                                                              #
     # ---------------------------------------------------------------------- #
     def signals(self, state: ManifoldState) -> SignalSet:
+        # Confidence fuses regime stability, low anomaly, and density gate.
         gate = _density_gate(state.density)
         confidence = state.regime_prob * (1.0 - state.anomaly_score) * gate
         confidence = max(0.0, min(1.0, confidence))
+
+        # Store tanh(sharpe) so target() can recover sharpe_proxy amplification.
         sharpe = state.fwd_return_mean / (state.fwd_return_std + 1e-9)
         return SignalSet(
             ts=state.ts,
             symbol=state.symbol,
-            momentum=sharpe,
+            momentum=math.tanh(sharpe),    # bounded [-1,1] for safe division
             expected_return=state.fwd_return_mean,
             anomaly=state.anomaly_score,
             regime_id=state.regime_id,
@@ -96,15 +100,19 @@ class AsymmetricPayoffStrategy:
         if signals.regime_id == ANOMALY_REGIME or signals.anomaly > _ANOMALY_THRESH:
             return _flat()
 
-        # --- cut_factor: linear decay from 1 at _ANOMALY_RAMP to 0 at _ANOMALY_THRESH ---
+        # --- cut_factor: 1 below _ANOMALY_RAMP, linearly -> 0 at _ANOMALY_THRESH ---
         if signals.anomaly <= _ANOMALY_RAMP:
             cut_factor = 1.0
         else:
             span = max(_ANOMALY_THRESH - _ANOMALY_RAMP, 1e-9)
             cut_factor = max(0.0, 1.0 - (signals.anomaly - _ANOMALY_RAMP) / span)
 
-        # --- conviction: tanh(GAIN * tanh(sharpe)) ---
-        conviction = math.tanh(_GAIN * math.tanh(signals.momentum))
+        # --- sharpe_proxy: recover amplified sharpe from tanh(sharpe) and expected_return
+        #     This amplifies low-tanh-sharpe regions where signals.momentum is small
+        #     but expected_return is non-trivial, then saturates via outer double-tanh ---
+        mom = signals.momentum
+        sharpe_proxy = signals.expected_return / (mom if abs(mom) > 1e-9 else 1.0)
+        conviction = math.tanh(_GAIN * math.tanh(sharpe_proxy))
 
         # --- final weight ---
         weight = conviction * cut_factor * signals.confidence
@@ -117,6 +125,7 @@ class AsymmetricPayoffStrategy:
         in_pos = self._in_position.get(sym, False)
 
         if not in_pos:
+            # enter only on clean signal
             if abs_w >= _ENTRY_THRESH:
                 self._in_position[sym] = True
                 self._stance[sym]      = 1 if weight > 0 else -1
@@ -124,21 +133,21 @@ class AsymmetricPayoffStrategy:
                 return TargetPosition(ts=signals.ts, symbol=sym, target_weight=weight)
             return TargetPosition(ts=signals.ts, symbol=sym, target_weight=0.0)
 
-        # --- in position: update peak, check trailing stop ---
+        # --- in position: update peak, check trailing conviction stop ---
         peak = self._peak_w.get(sym, abs_w)
         if abs_w > peak:
             self._peak_w[sym] = abs_w
             peak = abs_w
 
-        # trailing stop: conviction decayed below fraction of peak -> cut immediately
+        # conviction has decayed too far from peak -> cut immediately
         if peak > 0.0 and abs_w < _TRAIL_FRAC * peak:
             return _flat()
 
-        # too small after dead-band -> exit
+        # weight has shrunk into dead-band -> exit
         if abs_w < _DEAD_BAND:
             return _flat()
 
-        # sign flip: flip only with sufficient conviction, else cut to flat
+        # sign flip: re-enter opposite only with sufficient conviction, else cut
         current_stance = self._stance.get(sym, 0)
         new_stance = 1 if weight > 0 else (-1 if weight < 0 else 0)
         if new_stance != 0 and new_stance != current_stance:
