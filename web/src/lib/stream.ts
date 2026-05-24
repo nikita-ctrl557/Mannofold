@@ -8,10 +8,21 @@ export interface StreamHandlers {
   onStatus?: (s: string) => void;
 }
 
-// POST a new run then connect the WS and dispatch decoded events.
+export interface RunParams {
+  dataset?: string;
+  mode?: "backtest" | "paper";
+  speed?: number;
+  start?: number;
+  end?: number;
+  n_bars?: number;
+  persist?: boolean;
+}
+
+// POST a new run (optionally parametrized) then connect the WS and dispatch events.
 // Tolerates seq gaps (server uses drop-oldest backpressure).
 export async function startLiveRun(
-  handlers: StreamHandlers
+  handlers: StreamHandlers,
+  params: RunParams = {}
 ): Promise<{ close: () => void }> {
   handlers.onStatus?.("starting run...");
   let runId = "";
@@ -19,7 +30,7 @@ export async function startLiveRun(
     const r = await fetch("/api/runs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(params),
     });
     if (r.ok) {
       const j = (await r.json()) as { run_id: string };

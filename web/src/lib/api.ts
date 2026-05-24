@@ -18,6 +18,27 @@ export interface LoadResult {
   source: "api" | "sample";
 }
 
+// List available runs from the API (empty when offline).
+export async function listRuns(): Promise<string[]> {
+  const list = await tryJson<{ runs: string[] }>("/api/runs");
+  return list?.runs ?? [];
+}
+
+export interface DatasetInfo {
+  name: string;
+  symbol: string;
+  n_bars: number | null;
+  start: string | null;
+  end: string | null;
+  description: string;
+}
+
+// Datasets available for the simulation view (synthetic + free historical).
+export async function listDatasets(): Promise<DatasetInfo[]> {
+  const r = await tryJson<{ datasets: DatasetInfo[] }>("/api/datasets");
+  return r?.datasets ?? [];
+}
+
 // Try the live API first; fall back to bundled sample for offline dev.
 export async function loadRun(runId?: string): Promise<LoadResult> {
   let id = runId;

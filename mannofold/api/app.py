@@ -45,6 +45,7 @@ from mannofold.contracts.events import StreamEvent
 from mannofold.contracts.models import StepResult
 from mannofold.engine.engine import Engine, EngineConfig
 from mannofold.engine.metrics import compute_metrics
+from mannofold.feed.github_csv import DATASETS, load_bars
 from mannofold.feed.historical import HistoricalReplayFeed
 from mannofold.feed.live_replay import LiveReplayFeed
 from mannofold.feed.synthetic import SyntheticConfig, generate_bars
@@ -131,16 +132,54 @@ class Hub:
 _HUBS: dict[str, Hub] = {}
 
 
+ALLOWED_DATASETS = ("synthetic", *DATASETS.keys())
+
+
 class StartRunBody(BaseModel):
-    n_bars: int = 1500
-    seed: int = 7
-    mode: str = "backtest"  # "backtest" | "paper"
-    speed: float = 0.0
+    dataset: str = "synthetic"  # "synthetic" | "vix" | "aapl" | "sp500"
+    n_bars: int = 1500  # synthetic only
+    seed: int = 7  # synthetic only
+    mode: str = "backtest"  # "backtest" | "paper" (paper honours `speed`)
+    speed: float = 0.0  # seconds between bars; 0 = ultraspeed
+    start: int | None = None  # inclusive bar index — pick a slice of history
+    end: int | None = None  # exclusive bar index
+    persist: bool = True  # sim/replay runs set false to avoid cluttering /api/runs
 
 
 def _data_dir() -> Path:
     """Resolve the data dir at call time so tests can override the cwd."""
     return Path("data")
+
+
+def _build_run(body: StartRunBody):
+    """Build the (feed, config) for a run from its dataset + history segment.
+
+    The same engine serves every dataset; only the feed and walk-forward windows
+    differ. Slicing ``[start:end]`` is how the UI blind-backtests an arbitrary
+    slice of history (e.g. the 2008 or 2020 regime).
+    """
+    if body.dataset == "synthetic":
+        bars, _ = generate_bars(SyntheticConfig(n_bars=body.n_bars, seed=body.seed))
+        base_train, refit_every, max_train = min(400, max(60, body.n_bars // 3)), 400, 1500
+    else:
+        bars = load_bars(body.dataset)
+        base_train, refit_every, max_train = 500, 250, 1000
+
+    if body.start is not None or body.end is not None:
+        s = max(0, body.start or 0)
+        e = body.end if body.end is not None else len(bars)
+        bars = bars[s:e]
+    if len(bars) < 120:
+        raise ValueError("history segment too short (need >= 120 bars)")
+
+    train_size = min(base_train, max(60, len(bars) // 3))
+    cfg = EngineConfig(train_size=train_size, refit_every=refit_every, max_train=max_train)
+    feed: HistoricalReplayFeed | LiveReplayFeed = (
+        LiveReplayFeed(bars, speed=body.speed)
+        if body.mode == "paper"
+        else HistoricalReplayFeed(bars)
+    )
+    return feed, cfg
 
 
 def _run_engine(
@@ -152,14 +191,8 @@ def _run_engine(
 ) -> None:
     """Synchronous engine driver — runs inside the executor thread."""
     try:
-        bars, _ = generate_bars(SyntheticConfig(n_bars=body.n_bars, seed=body.seed))
-        if body.mode == "paper":
-            feed: HistoricalReplayFeed | LiveReplayFeed = LiveReplayFeed(bars, speed=body.speed)
-        else:
-            feed = HistoricalReplayFeed(bars)
-        store = LocalStateStore(data_dir)
-        # Use a small train_size so short demo runs still reach the online phase.
-        cfg = EngineConfig(train_size=min(400, max(50, body.n_bars // 3)))
+        feed, cfg = _build_run(body)
+        store = LocalStateStore(data_dir) if body.persist else None
         engine = Engine(config=cfg, store=store, on_event=publish, run_id=run_id)
         engine.run(feed)
     finally:
@@ -189,6 +222,36 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             return {"runs": []}
         return {"runs": sorted(p.name for p in d.iterdir() if p.is_dir())}
 
+    @app.get("/api/datasets")
+    def list_datasets() -> dict[str, list[dict[str, Any]]]:
+        """Available datasets for the simulation view, with span metadata."""
+        out: list[dict[str, Any]] = [
+            {
+                "name": "synthetic",
+                "symbol": "SYNTH",
+                "n_bars": None,
+                "start": None,
+                "end": None,
+                "description": "Regime-switching synthetic market (configurable length).",
+            }
+        ]
+        for name, ds in DATASETS.items():
+            try:
+                bars = load_bars(name)
+            except Exception:  # pragma: no cover - network/parse issues
+                continue
+            out.append(
+                {
+                    "name": name,
+                    "symbol": ds.symbol,
+                    "n_bars": len(bars),
+                    "start": bars[0].ts.isoformat(),
+                    "end": bars[-1].ts.isoformat(),
+                    "description": ds.description,
+                }
+            )
+        return {"datasets": out}
+
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> JSONResponse:
         path = runs_dir() / run_id / "run.json"
@@ -217,6 +280,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         body = body or StartRunBody()
         if body.mode not in ("backtest", "paper"):
             raise HTTPException(status_code=422, detail="mode must be 'backtest' or 'paper'")
+        if body.dataset not in ALLOWED_DATASETS:
+            raise HTTPException(status_code=422, detail=f"dataset must be one of {ALLOWED_DATASETS}")
 
         run_id = uuid.uuid4().hex[:12]
         loop = asyncio.get_running_loop()  # capture BEFORE submitting to the executor

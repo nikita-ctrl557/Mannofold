@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { StepResult, Regime, Metrics } from "./types/contracts";
-import { loadRun, loadMetrics, computeMetrics, deriveRegimes } from "./lib/api";
-import { startLiveRun } from "./lib/stream";
+import {
+  loadRun,
+  loadMetrics,
+  computeMetrics,
+  deriveRegimes,
+  listRuns,
+  listDatasets,
+  type DatasetInfo,
+} from "./lib/api";
+import { startLiveRun, type RunParams } from "./lib/stream";
 import Header from "./components/Header";
+import SimControl, { SPEEDS } from "./components/SimControl";
 import ManifoldMap from "./components/ManifoldMap";
 import EquityChart from "./components/EquityChart";
 import SignalsChart from "./components/SignalsChart";
@@ -20,29 +29,55 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [live, setLive] = useState(false);
   const [status, setStatus] = useState("idle");
+  const [runs, setRuns] = useState<string[]>([]);
+  const [selectedRun, setSelectedRun] = useState("");
+  const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
+  const [simDataset, setSimDataset] = useState("vix");
+  const [simWindow, setSimWindow] = useState(1000);
+  const [simStartFrac, setSimStartFrac] = useState(0.5);
+  const [simSpeed, setSimSpeed] = useState("fast");
 
   const connRef = useRef<{ close: () => void } | null>(null);
   // batch live steps to avoid a setState per WS message
   const pendingRef = useRef<StepResult[]>([]);
   const rafRef = useRef<number | null>(null);
 
-  // initial offline/api load
+  const loadById = useCallback(async (id?: string) => {
+    const res = await loadRun(id || undefined);
+    setSteps(res.run.steps);
+    setRegimes(res.regimes);
+    setSource(res.source);
+    const m = await loadMetrics(res.run.run_id, res.run.steps);
+    setMetrics(m);
+    setLoading(false);
+  }, []);
+
+  // initial load: discover runs + datasets, default to the real VIX backtest
   useEffect(() => {
     let alive = true;
     (async () => {
-      const res = await loadRun();
+      const [ids, ds] = await Promise.all([listRuns(), listDatasets()]);
       if (!alive) return;
-      setSteps(res.run.steps);
-      setRegimes(res.regimes);
-      setSource(res.source);
-      const m = await loadMetrics(res.run.run_id, res.run.steps);
-      if (alive) setMetrics(m);
-      setLoading(false);
+      setRuns(ids);
+      setDatasets(ds);
+      if (ds.length && !ds.some((d) => d.name === "vix")) setSimDataset(ds[0].name);
+      const def = ids.includes("vix") ? "vix" : ids[0] ?? "";
+      setSelectedRun(def);
+      await loadById(def);
     })();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [loadById]);
+
+  const onSelectRun = useCallback(
+    (id: string) => {
+      if (live) return;
+      setSelectedRun(id);
+      void loadById(id);
+    },
+    [live, loadById]
+  );
 
   const flush = useCallback(() => {
     rafRef.current = null;
@@ -70,28 +105,66 @@ export default function App() {
     setStatus("idle");
   }, []);
 
-  const startLive = useCallback(async () => {
-    setLive(true);
-    setSteps([]);
-    setMetrics(null);
-    pendingRef.current = [];
-    setStatus("starting...");
-    connRef.current = await startLiveRun({
-      onStatus: (s) => setStatus(s),
-      onStart: () => setSource("api"),
-      onRegimes: (r) => setRegimes(r),
-      onStep: (step) => {
-        pendingRef.current.push(step);
-        scheduleFlush();
-      },
-      onEnd: () => setStatus("run ended"),
-    });
-  }, [scheduleFlush]);
+  const startSim = useCallback(
+    async (params: RunParams) => {
+      setLive(true);
+      setSteps([]);
+      setMetrics(null);
+      pendingRef.current = [];
+      setStatus("starting...");
+      connRef.current = await startLiveRun(
+        {
+          onStatus: (s) => setStatus(s),
+          onStart: () => setSource("api"),
+          onRegimes: (r) => setRegimes(r),
+          onStep: (step) => {
+            pendingRef.current.push(step);
+            scheduleFlush();
+          },
+          onEnd: () => setStatus("run ended"),
+        },
+        params
+      );
+    },
+    [scheduleFlush]
+  );
+
+  // Derive the run request + a step estimate from the simulation controls.
+  const selectedInfo = useMemo(
+    () => datasets.find((d) => d.name === simDataset) ?? null,
+    [datasets, simDataset]
+  );
+  const isSynth = simDataset === "synthetic";
+  const totalBars = isSynth ? simWindow : selectedInfo?.n_bars ?? simWindow;
+  const maxStart = Math.max(0, totalBars - simWindow);
+  const startIdx = isSynth ? 0 : Math.min(maxStart, Math.round(simStartFrac * maxStart));
+  const simParams: RunParams = useMemo(
+    () =>
+      isSynth
+        ? {
+            dataset: "synthetic",
+            mode: "paper",
+            speed: SPEEDS[simSpeed],
+            n_bars: simWindow,
+            persist: false,
+          }
+        : {
+            dataset: simDataset,
+            mode: "paper",
+            speed: SPEEDS[simSpeed],
+            start: startIdx,
+            end: startIdx + simWindow,
+            persist: false,
+          },
+    [isSynth, simDataset, simWindow, simSpeed, startIdx]
+  );
+  const estTrain = Math.min(isSynth ? 400 : 500, Math.max(60, Math.floor(simWindow / 3)));
+  const simExpected = Math.max(1, simWindow - estTrain);
 
   const onToggleLive = useCallback(() => {
     if (live) stopLive();
-    else void startLive();
-  }, [live, startLive, stopLive]);
+    else void startSim(simParams);
+  }, [live, startSim, stopLive, simParams]);
 
   useEffect(() => () => connRef.current?.close(), []);
 
@@ -123,6 +196,28 @@ export default function App() {
         live={live}
         status={status}
         onToggleLive={onToggleLive}
+        runs={runs}
+        selectedRun={selectedRun}
+        onSelectRun={onSelectRun}
+      />
+      <SimControl
+        datasets={datasets}
+        dataset={simDataset}
+        setDataset={setSimDataset}
+        window={simWindow}
+        setWindow={setSimWindow}
+        startFrac={simStartFrac}
+        setStartFrac={setSimStartFrac}
+        speed={simSpeed}
+        setSpeed={setSimSpeed}
+        startIdx={startIdx}
+        totalBars={totalBars}
+        info={selectedInfo}
+        live={live}
+        stepCount={steps.length}
+        expected={simExpected}
+        onRun={() => void startSim(simParams)}
+        onStop={stopLive}
       />
       <div className="grid">
         <div className="panel manifold-panel">

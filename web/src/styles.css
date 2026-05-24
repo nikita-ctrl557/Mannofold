@@ -117,6 +117,132 @@ body {
   padding: 2px 6px;
   border-radius: 3px;
 }
+.run-select {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.run-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---- simulation control bar ---- */
+.simbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.sim-title {
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--accent, #76b7b2);
+}
+.sim-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+.sim-field.grow {
+  flex: 1;
+  min-width: 160px;
+}
+.sim-field select {
+  background: #0c0f14;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.sim-field input[type="range"] {
+  flex: 1;
+  accent-color: var(--good);
+}
+.sim-date {
+  color: var(--fg);
+  font-family: var(--mono);
+  text-transform: none;
+}
+.seg {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.seg-btn {
+  background: #0c0f14;
+  color: var(--fg-dim);
+  border: none;
+  border-right: 1px solid var(--border);
+  padding: 3px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+.seg-btn:last-child {
+  border-right: none;
+}
+.seg-btn.on {
+  background: var(--good);
+  color: #06210f;
+  font-weight: 700;
+}
+.sim-run {
+  background: var(--good);
+  color: #06210f;
+  border: none;
+  padding: 6px 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.sim-run.stop {
+  background: var(--bad);
+  color: #2a0808;
+}
+.sim-progress {
+  position: relative;
+  width: 150px;
+  height: 16px;
+  background: #0c0f14;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.sim-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, #1f6f54, var(--good));
+  transition: width 0.15s linear;
+}
+.sim-progress-txt {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: var(--fg);
+  font-family: var(--mono);
+}
 
 /* ---- grid ---- */
 .grid {

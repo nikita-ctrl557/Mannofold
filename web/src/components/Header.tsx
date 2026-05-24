@@ -9,6 +9,9 @@ interface Props {
   live: boolean;
   status: string;
   onToggleLive: () => void;
+  runs: string[];
+  selectedRun: string;
+  onSelectRun: (id: string) => void;
 }
 
 function pct(v: number): string {
@@ -24,6 +27,9 @@ export default function Header({
   live,
   status,
   onToggleLive,
+  runs,
+  selectedRun,
+  onSelectRun,
 }: Props) {
   const regLabel =
     regimes.find((r) => r.regime_id === currentRegime)?.label ?? "--";
@@ -81,6 +87,21 @@ export default function Header({
         />
       </div>
       <div className="live-ctl">
+        {runs.length > 0 && (
+          <select
+            className="run-select"
+            value={selectedRun}
+            disabled={live}
+            onChange={(e) => onSelectRun(e.target.value)}
+            title="select a run"
+          >
+            {runs.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+        )}
         {source && <span className="src-tag">{source}</span>}
         <span className="status">{status}</span>
         <button
